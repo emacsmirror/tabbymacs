@@ -54,11 +54,17 @@
 						  (:completion
 						   (:completionItem
 							(:snippetSupport t)))))))
-	  (jsonrpc-request
+	  (jsonrpc-async-request
 	   tabbymacs--connection
-	   :initialize init-params))
-	(jsonrpc-notify tabbymacs--connection :initialized '(:dummy t))
-	(message "Started tabby-agent connection.")))
+	   :initialize init-params
+	   :success-fn (lambda (_result)
+					 (jsonrpc-notify
+					  tabbymacs--connection
+					  :initialized
+					  '(:dummy t))
+					 (message "Connection with tabby-agent initialized successfully."))
+	   :error-fn (lambda (err)
+				   (message "tabby-agent init failed: %S" err))))))
 
 (defun tabbymacs-disconnect ()
   "Shutdown the connection to tabby-agent." ;
@@ -82,7 +88,7 @@
 							 :languageId ,(symbol-name major-mode)
 							 :version 1
 							 :text ,(buffer-substring-no-properties (point-min) (point-max))))))))
-;
+
 (defun tabbymacs--did-change (beg end len)
   "Send textDocument/didChange after buffer edits. Simplified."
   (when (and buffer-file-name tabbymacs--connection)
@@ -93,6 +99,30 @@
 	   `(:textDocument (:uri ,uri :version 1)
 					   :contentChages [(:text ,(buffer-substring-no-properties (point-min) (point-max)))])))))
 
+(defun tabbymacs-complete-at-point ()
+  "Request completions from tabby-agent. Simplified."
+  (interactive)
+  (when (and buffer-file-name tabbymacs--connection)
+	(let* ((uri (tabbymacs--path-to-uri buffer-file-name))
+		   (pos (list :line (1- (line-number-at-pos))
+					  :character (current-column)))
+		   (params `(:textDocument (:uri ,uri)
+								   :position ,pos)))
+	  (jsonrpc-async-request
+	   tabbymacs--connection
+	   :textDocument/completion params
+	   :success-fn (lambda (res)
+					 (if (and res (plist-get res :items))
+						 (let* ((first (aref (plist-get res :items) 0))
+								(insert-text (or (plist-get first :insertText)
+												 (plist-get first :label))))
+						   (when insert-text
+							 (insert insert-text)
+							 (message "tabby completion inserted: %s" insert-text)))
+					   (message "No completions.")))
+	   :error-fn (lambda (err)
+				   (message "Completion request failed: %S" err))))))
+
 (defun tabbymacs-enable-sync ()
   "Enable LSP document sync for the current buffer."
   (interactive)
@@ -101,3 +131,7 @@
 
 (provide 'tabbymacs)
 
+
+
+;; Need to add timeout, tabby-agent start command as confifurable
+;; correct language id extraction
