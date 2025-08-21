@@ -51,17 +51,15 @@
 														  (directory-file-name root)))]
 						 :capabilities
 						 (:textDocument
-						  (:completion
-						   (:completionItem
-							(:snippetSupport t)))))))
+						  (:inlineCompletion
+						   (:dynamicRegistration :json-false))))))
 	  (jsonrpc-async-request
 	   tabbymacs--connection
 	   :initialize init-params
 	   :success-fn (lambda (_result)
 					 (jsonrpc-notify
 					  tabbymacs--connection
-					  :initialized
-					  '(:dummy t))
+					  :initialized nil)
 					 (message "Connection with tabby-agent initialized successfully."))
 	   :error-fn (lambda (err)
 				   (message "tabby-agent init failed: %S" err))))))
@@ -71,11 +69,19 @@
   (interactive)
   (when (and tabbymacs--connection
 			 (jsonrpc-running-p tabbymacs--connection))
-	(jsonrpc-request tabbymacs--connection :shutdown nil)
-	(jsonrpc-notify tabbymacs--connection :exit nil)
-	(jsonrpc-shutdown tabbymacs--connection)
-	(setq tabbymacs--connection nil)
-	(message "Stopped tabby-agent connection.")))
+	(jsonrpc-async-request
+	 tabbymacs--connection
+	 :shutdown nil
+	 :success-fn (lambda (_result)
+				   (jsonrpc-notify
+					tabbymacs--connection
+					:exit nil)
+				   (jsonrpc-shutdown
+					tabbymacs--connection)
+				   (setq tabbymacs--connection nil)
+				   (message "Stopped tabby-agent connection."))
+	 :error-fn (lambda (err)
+				 (message "tabby-agent shutdown faileds: %S" err)))))
 
 (defun tabbymacs--did-open ()
   "Send textDocument/didOpen for the current buffer."
