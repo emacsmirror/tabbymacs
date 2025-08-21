@@ -3,7 +3,6 @@
 (require 'cl-lib)
 (require 'url-util)
 
-(defvar tabbymacs--proc nil)
 (defvar tabbymacs--connection nil
   "The JSONRPC connection to tabby-agent")
 
@@ -55,8 +54,9 @@
 						  (:completion
 						   (:completionItem
 							(:snippetSupport t)))))))
-	  (jsonrpc-request tabbymacs--connection
-					   :initialize init-params))
+	  (jsonrpc-request
+	   tabbymacs--connection
+	   :initialize init-params))
 	(jsonrpc-notify tabbymacs--connection :initialized '(:dummy t))
 	(message "Started tabby-agent connection.")))
 
@@ -70,6 +70,34 @@
 	(jsonrpc-shutdown tabbymacs--connection)
 	(setq tabbymacs--connection nil)
 	(message "Stopped tabby-agent connection.")))
+
+(defun tabbymacs--did-open ()
+  "Send textDocument/didOpen for the current buffer."
+  (when (and buffer-file-name tabbymacs--connection)
+	(let ((uri (tabbymacs--path-to-uri buffer-file-name)))
+	  (jsonrpc-notify
+	   tabbymacs--connection
+	   :textDocument/didOpen
+	   `(:textDocument (:uri ,uri
+							 :languageId ,(symbol-name major-mode)
+							 :version 1
+							 :text ,(buffer-substring-no-properties (point-min) (point-max))))))))
+;
+(defun tabbymacs--did-change (beg end len)
+  "Send textDocument/didChange after buffer edits. Simplified."
+  (when (and buffer-file-name tabbymacs--connection)
+	(let ((uri (tabbymacs--path-to-uri buffer-file-name)))
+	  (jsonrpc-notify
+	   tabbymacs--connection
+	   :textDocument/didChange
+	   `(:textDocument (:uri ,uri :version 1)
+					   :contentChages [(:text ,(buffer-substring-no-properties (point-min) (point-max)))])))))
+
+(defun tabbymacs-enable-sync ()
+  "Enable LSP document sync for the current buffer."
+  (interactive)
+  (add-hook 'after-change-functions #'tabbymacs--did-change nil t)
+  (tabbymacs--did-open))
 
 (provide 'tabbymacs)
 
