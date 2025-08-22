@@ -48,7 +48,7 @@ You can extend this mapping for custom major modes."
 (defun tabbymacs--buffer-languageId ()
   "Get languageId corresponding to current buffer."
   (or tabbymacs--buffer-languageId-cache
-	  (setq tabbymacs--buffer-language-cache
+	  (setq tabbymacs--buffer-languageId-cache
 			(or (cdr (assoc major-mode tabbymacs-language-id-configuration))
 				(let ((name (symbol-name major-mode)))
 				  (cond
@@ -190,7 +190,7 @@ You can extend this mapping for custom major modes."
 	 tabbymacs--connection
 	 :textDocument/didChange
 	 `(:textDocument ,(tabbymacs--VersionedTextDocumentIdentifier)
-					 :contentChages [(:text ,(tabbymacs--buffer-content))]))))
+					 :contentChanges [(:text ,(tabbymacs--buffer-content))]))))
 
 (defun tabbymacs--did-close ()
   "Send textDocument/didClose notification for the current buffer."
@@ -201,7 +201,7 @@ You can extend this mapping for custom major modes."
 	 `(:textDocument ,(tabbymacs--TextDocumentIdentifier))))
   (remove-hook 'after-change-functions #'tabbymacs--after-change-hook t)
   (setq tabbymacs--TextDocumentIdentifier-cache nil
-		tabbymacs--buffer-language-cache nil
+		tabbymacs--buffer-languageId-cache nil
 		tabbymacs--current-buffer-version 0))
 
 ;; ------------------------------
