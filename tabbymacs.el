@@ -3,8 +3,37 @@
 (require 'cl-lib)
 (require 'url-util)
 
+;; ------------------------------
+;; Buffer-local caches & vars
+;; ------------------------------
+
+(defvar-local tabbymacs--TextDocumentIdentifier-cache nil
+  "Cached LSP TextDocumentIdentifier for the current buffer.")
+
+(defvar-local tabbymacs--current-buffer-version 0
+  "The version number of document (it increases after each change).")
+
+(defvar-local tabbymacs--buffer-languageId-cache nil
+  "Cached LSP languageId for current buffer.")
+
 (defvar tabbymacs--connection nil
   "The JSONRPC connection to tabby-agent")
+
+;; ------------------------------
+;; User configuration
+;; ------------------------------
+
+(defcustom tabbymacs-language-id-configuration
+  '((c++-ts-mode . "cpp")
+	(c++-mode . "cpp"))
+  "Mapping of major modes to LSP language IDs.
+You can extend this mapping for custom major modes."
+  :type '(alist :key-type symbol :value-type string)
+  :group 'tabbymacs)
+
+;; ------------------------------
+;; Utility functions
+;; ------------------------------
 
 (defun tabbymacs--path-to-uri (path)
   "Convert PATH to a proper file:// URI with escaping."
@@ -16,8 +45,53 @@
   "Return the last component of PATH, without trailing slash."
   (file-name-nondirectory (directory-file-name path)))
 
+(defun tabbymacs--buffer-languageId ()
+  "Get languageId corresponding to current buffer."
+  (or tabbymacs--buffer-languageId-cache
+	  (setq tabbymacs--buffer-language-cache
+			(or (cdr (assoc major-mode tabbymacs-language-id-configuration))
+				(let ((name (symbol-name major-mode)))
+				  (cond
+				   ((string-suffix-p "-ts-mode" name)
+					(string-remove-suffix "-ts-mode" name))
+				   ((string-suffix-p "-mode" name)
+					(string-remove-suffix "-mode" name))
+				   (t nil))))))
+  (unless tabbymacs--buffer-languageId-cache
+	(display-warning
+	 'tabbymacs
+	 (format "Unable to extract languageId for buffer `%s'. Major mode: %s"
+			 (buffer-name) major-mode)
+	 :warning))
+  tabbymacs--buffer-languageId-cache)
+
+(defun tabbymacs--TextDocumentIdentifier ()
+  "Return TextDocumentIdentifier object for the current buffer."
+  (or tabbymacs--TextDocumentIdentifier-cache
+	  (setq tabbymacs--TextDocumentIdentifier-cache
+			(list :uri (tabbymacs--path-to-uri buffer-file-name)))))
+
+(defun tabbymacs--VersionedTextDocumentIdentifier ()
+  "Return VersionedTextDocumentIdentifier object for the current buffer."
+  (append (tabbymacs--TextDocumentIdentifier)
+		  (list :version tabbymacs--current-buffer-version)))
+
+(defun tabbymacs--buffer-content ()
+  "Return content of the current buffer."
+  (buffer-substring-no-properties (point-min) (point-max)))
+
+(defun tabbymacs--TextDocumentItem ()
+  "Return TextDocumentItem object for the current buffer."
+  (append (tabbymacs--VersionedTextDocumentIdentifier)
+		  (list :languageId (tabbymacs--buffer-languageId)
+				:text (tabbymacs--buffer-content))))
+
+;; ------------------------------
+;; JSONRPC Connection
+;; ------------------------------
+
 (defun tabbymacs--make-connection()
-  "Start a connection to tabby-agent via LSP (stdio)."
+  "Start a JSONRPC connection to tabby-agent."
   (setq tabbymacs--connection
 		(make-instance
 		 'jsonrpc-process-connection
@@ -50,8 +124,9 @@
 						 :clientInfo (:name "emacs" :version ,(emacs-version))
 						 :rootPath ,(file-local-name root)
 						 :rootUri ,uri
-						 :workspaceFolders [(:uri ,uri
-												  :name ,(tabbymacs--basename root))]
+						 :workspaceFolders
+						 [(:uri ,uri
+								:name ,(tabbymacs--basename root))]
 						 :capabilities
 						 (:textDocument
 						  (:inlineCompletion
@@ -63,9 +138,9 @@
 					 (jsonrpc-notify
 					  tabbymacs--connection
 					  :initialized nil)
-					 (message "Connection with tabby-agent initialized successfully."))
+					 (message "Tabby-agent initialized."))
 	   :error-fn (lambda (err)
-				   (message "tabby-agent init failed: %S" err))))))
+				   (message "Tabby-agent init failed: %S" err))))))
 
 (defun tabbymacs-disconnect ()
   "Shutdown the connection to tabby-agent."
@@ -86,73 +161,16 @@
 	 :error-fn (lambda (err)
 				 (message "tabby-agent shutdown failed: %S" err)))))
 
-(defcustom tabbymacs-language-id-configuration
-  '((c++-ts-mode . "cpp")
-	(c++-mode . "cpp"))
-  "Mapping of major modes to LSP language IDs.
-You can extend this mapping for custom major modes."
-  :type '(alist :key-type symbol :value-type string)
-  :group 'tabbymacs)
-
-(defvar-local tabbymacs--buffer-languageId-cache nil
-  "Cached languageId for current buffer.")
-
-(defun tabbymacs--buffer-languageId ()
-  "Get languageId corresponding to current buffer."
-  (or tabbymacs--buffer-languageId-cache
-	  (setq tabbymacs--buffer-language-cache
-			(or
-			 (cdr (assoc major-mode tabbymacs-language-id-configuration))
-			 (let ((name (symbol-name major-mode)))
-			   (cond
-				((string-suffix-p "-ts-mode" name)
-				 (string-remove-suffix "-ts-mode" name))
-				((string-suffix-p "-mode" name)
-				 (string-remove-suffix "-mode" name))
-				(t nil))))))
-  (unless tabbymacs--buffer-languageId-cache
-	(display-warning
-	 'tabbymacs
-	 (format "Unable to extract languageId for buffer `%s'. Major mode: %s"
-			 (buffer-name) major-mode)
-	 :warning))
-  tabbymacs--buffer-languageId-cache)
-
-(defvar-local tabbymacs--TextDocumentIdentifier-cache nil
-  "Cached LSP TextDocumentIdentifier for the current buffer.")
-
-(defun tabbymacs--TextDocumentIdentifier ()
-  "Return TextDocumentIdentifier object for the current buffer."
-  (or tabbymacs--TextDocumentIdentifier-cache
-	  (setq tabbymacs--TextDocumentIdentifier-cache
-			(list :uri (tabbymacs--path-to-uri buffer-file-name)))))
-
-(defvar-local tabbymacs--current-buffer-version 0
-  "The version number of document (it increases after each change).")
-
-(defun tabbymacs--VersionedTextDocumentIdentifier ()
-  "Return VersionedTextDocumentIdentifier object for the current buffer.
-Extends `tabbymacs-TextDocumentIdentifier` with :version."
-  (append (tabbymacs--TextDocumentIdentifier)
-		  (list :version tabbymacs--curent-buffer-version)))
-
-(defun tabbymacs--buffer-content ()
-  "Get content of the current buffer."
-  (buffer-substring-no-properties (point-min) (point-max)))
-
-(defun tabbymacs--TextDocumentItem ()
-  "Compute TextDocumentItem object for the current buffer.
-This includes URI, version, languageId and current text."
-  (append
-   (tabbymacs--VersionedTextDocumentIdentifier)
-   (list :languageId (tabbymacs--buffer-languageId)
-		 :text (tabbymacs--buffer-content))))
+;; ------------------------------
+;; Buffer notifications
+;; ------------------------------
 
 (defun tabbymacs--did-open ()
   "Send textDocument/didOpen notification for the current buffer."
   (when (and buffer-file-name tabbymacs--connection)
 	(setq tabbymacs--TextDocumentIdentifier-cache nil
-		  tabbymacs--current-buffer-version 0)
+		  tabbymacs--current-buffer-version 0
+		  tabbymacs--buffer-languageId-cache nil)
 	(jsonrpc-notify
 	 tabbymacs--connection
 	 :textDocument/didOpen
@@ -163,11 +181,11 @@ This includes URI, version, languageId and current text."
 
 (defun tabbymacs--after-change-hook (_beg _end _len)
   "Hook function to send didChange notifications after buffer edits."
-  (when (and tabbymacs--connection buffer-file-name)
+  (when (and buffer-file-name tabbymacs--connection)
 	(tabbymacs--did-change)))
 
 (defun tabbymacs--did-change ()
-  "Send textDocument/didChange after buffer edits. Simplified."
+  "Send textDocument/didChange notification for the current buffer."
   (when (and buffer-file-name tabbymacs--connection)
 	(cl-incf tabbymacs--current-buffer-version)
 	(jsonrpc-notify
@@ -176,9 +194,34 @@ This includes URI, version, languageId and current text."
 	 `(:textDocument ,(tabbymacs--VersionedTextDocumentIdentifier)
 					 :contentChages [(:text ,(tabbymacs--buffer-content))]))))
 
+(defun tabbymacs--did-close ()
+  "Send textDocument/didClose notification for the current buffer."
+  (when (and buffer-file-name tabbymacs--connection)
+	(jsonrpc-notify
+	 tabbymacs--connection
+	 :textDocument/didClose
+	 `(:textDocument ,(tabbymacs--TextDocumentIdentifier)))))
 
+;; ------------------------------
+;; Minor mode
+;; ------------------------------
+
+;;;###autoload
+(define-minor-mode tabbymacs-mode
+  "Minor mode for Tabby LSP inline completion."
+  :lighter " Tabbymacs"
+  :keymap nil
+  (if tabbymacs-mode
+	  (progn
+		(tabbymacs-connect)
+		(tabbymacs--did-open))
+	(progn
+	  (tabbymacs--did-close)
+	  (setq tabbymacs--TextDocumentIdentifier-cache nil
+			tabbymacs--current-buffer-version 0
+			tabbymacs--buffer-languageId-cache nil)
+	  (remove-hook 'after-change-functions
+				   #'tabbymacs--after-change-hook t))))
 
 (provide 'tabbymacs)
 
-;; Need to add timeout, tabby-agent start command as confifurable
-;; correct language id extraction
