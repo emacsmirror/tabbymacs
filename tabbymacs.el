@@ -113,7 +113,6 @@ You can extend this mapping for custom major modes."
 
 (defun tabbymacs-connect ()
   "Connect to tabby-agent if not already connected."
-  (interactive)
   (unless (and tabbymacs--connection
 			   (jsonrpc-running-p tabbymacs--connection))
 	(tabbymacs--make-connection)
@@ -144,7 +143,6 @@ You can extend this mapping for custom major modes."
 
 (defun tabbymacs-disconnect ()
   "Shutdown the connection to tabby-agent."
-  (interactive)
   (when (and tabbymacs--connection
 			 (jsonrpc-running-p tabbymacs--connection))
 	(jsonrpc-async-request
@@ -200,7 +198,11 @@ You can extend this mapping for custom major modes."
 	(jsonrpc-notify
 	 tabbymacs--connection
 	 :textDocument/didClose
-	 `(:textDocument ,(tabbymacs--TextDocumentIdentifier)))))
+	 `(:textDocument ,(tabbymacs--TextDocumentIdentifier))))
+  (remove-hook 'after-change-functions #'tabbymacs--after-change-hook t)
+  (setq tabbymacs--TextDocumentIdentifier-cache nil
+		tabbymacs--buffer-language-cache nil
+		tabbymacs--current-buffer-version 0))
 
 ;; ------------------------------
 ;; Minor mode
@@ -210,18 +212,17 @@ You can extend this mapping for custom major modes."
 (define-minor-mode tabbymacs-mode
   "Minor mode for Tabby LSP inline completion."
   :lighter " Tabbymacs"
+  :group 'tabbymacs
   :keymap nil
   (if tabbymacs-mode
 	  (progn
 		(tabbymacs-connect)
 		(tabbymacs--did-open))
-	(progn
-	  (tabbymacs--did-close)
-	  (setq tabbymacs--TextDocumentIdentifier-cache nil
-			tabbymacs--current-buffer-version 0
-			tabbymacs--buffer-languageId-cache nil)
-	  (remove-hook 'after-change-functions
-				   #'tabbymacs--after-change-hook t))))
+	(tabbymacs--did-close)
+	(unless (cl-some (lambda (buf)
+					   (buffer-local-value 'tabbymacs-mode buf))
+					 (buffer-list))
+	  (tabbymacs-disconnect))))
 
 (provide 'tabbymacs)
 
