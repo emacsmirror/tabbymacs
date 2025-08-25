@@ -42,7 +42,8 @@ You can extend this mapping for custom major modes."
 
 (defcustom tabbymacs-send-changes-idle-time 0.5
   "Don't send changes to tabby-agent before Emacs's been idle for this many seconds."
-  :type 'number)
+  :type 'number
+  :group 'tabbymacs)
 
 ;; ------------------------------
 ;; Utility functions
@@ -276,7 +277,6 @@ You can extend this mapping for custom major modes."
   "Disable before and after change hooks."
   (remove-hook 'before-change-functions #'tabbymacs--before-change t)
   (remove-hook 'after-change-functions #'tabbymacs--after-change t))
-
 
 ;; ------------------------------
 ;; Minor mode
