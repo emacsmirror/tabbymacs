@@ -1,3 +1,5 @@
+;;; tabbymacs.el --- The Emacs Client for tabby-agent  -*- lexical-binding: t; -*-
+
 (require 'json)
 (require 'jsonrpc)
 (require 'cl-lib)
@@ -6,6 +8,9 @@
 ;; ------------------------------
 ;; Buffer-local caches & vars
 ;; ------------------------------
+
+(defvar tabbymacs--connection nil
+  "The JSONRPC connection to tabby-agent")
 
 (defvar-local tabbymacs--TextDocumentIdentifier-cache nil
   "Cached LSP TextDocumentIdentifier for the current buffer.")
@@ -16,8 +21,12 @@
 (defvar-local tabbymacs--buffer-languageId-cache nil
   "Cached LSP languageId for current buffer.")
 
-(defvar tabbymacs--connection nil
-  "The JSONRPC connection to tabby-agent")
+(defvar-local tabbymacs--change-idle-timer nil
+  "Idle timer for batching textDocument/didChange notifications.")
+
+(defvar-local tabbymacs--recent-changes nil
+  "List of pending buffer changes for textDocument/didChange or
+the symbol `:emacs-messup' if Emacs gave inconsistent data.")
 
 ;; ------------------------------
 ;; User configuration
@@ -30,6 +39,10 @@
 You can extend this mapping for custom major modes."
   :type '(alist :key-type symbol :value-type string)
   :group 'tabbymacs)
+
+(defcustom tabbymacs-send-changes-idle-time 0.5
+  "Don't send changes to tabby-agent before Emacs's been idle for this many seconds."
+  :type 'number)
 
 ;; ------------------------------
 ;; Utility functions
@@ -85,6 +98,21 @@ You can extend this mapping for custom major modes."
   (append (tabbymacs--VersionedTextDocumentIdentifier)
 		  (list :languageId (tabbymacs--buffer-languageId)
 				:text (tabbymacs--buffer-content))))
+
+(defun tabbymacs--pos-to-lsp-position (pos)
+  "Convert buffer position POS to an LSP position."
+  (save-excursion
+	(goto-char pos)
+	(list :line (1- (line-number-at-pos))
+		  :character (- (point) (line-beginning-position)))))
+
+(defun tabbymacs--reset-vars ()
+  "Reset buffer local caches and vars."
+  (setq tabbymacs--recent-changes nil
+		tabbymacs--current-buffer-version 0
+		tabbymacs--change-idle-timer nil
+		tabbymacs--TextDocumentIdentifier-cache nil
+		tabbymacs--buffer-languageId-cache nil))
 
 ;; ------------------------------
 ;; JSONRPC Connection
@@ -166,31 +194,10 @@ You can extend this mapping for custom major modes."
 (defun tabbymacs--did-open ()
   "Send textDocument/didOpen notification for the current buffer."
   (when (and buffer-file-name tabbymacs--connection)
-	(setq tabbymacs--TextDocumentIdentifier-cache nil
-		  tabbymacs--current-buffer-version 0
-		  tabbymacs--buffer-languageId-cache nil)
-	(jsonrpc-notify
+    (jsonrpc-notify
 	 tabbymacs--connection
 	 :textDocument/didOpen
-	 `(:textDocument ,(tabbymacs--TextDocumentItem)))
-	(add-hook 'after-change-functions
-			  #'tabbymacs--after-change-hook
-			  nil t)))
-
-(defun tabbymacs--after-change-hook (_beg _end _len)
-  "Hook function to send didChange notifications after buffer edits."
-  (when (and buffer-file-name tabbymacs--connection)
-	(tabbymacs--did-change)))
-
-(defun tabbymacs--did-change ()
-  "Send textDocument/didChange notification for the current buffer."
-  (when (and buffer-file-name tabbymacs--connection)
-	(cl-incf tabbymacs--current-buffer-version)
-	(jsonrpc-notify
-	 tabbymacs--connection
-	 :textDocument/didChange
-	 `(:textDocument ,(tabbymacs--VersionedTextDocumentIdentifier)
-					 :contentChanges [(:text ,(tabbymacs--buffer-content))]))))
+	 `(:textDocument ,(tabbymacs--TextDocumentItem)))))
 
 (defun tabbymacs--did-close ()
   "Send textDocument/didClose notification for the current buffer."
@@ -198,11 +205,78 @@ You can extend this mapping for custom major modes."
 	(jsonrpc-notify
 	 tabbymacs--connection
 	 :textDocument/didClose
-	 `(:textDocument ,(tabbymacs--TextDocumentIdentifier))))
-  (remove-hook 'after-change-functions #'tabbymacs--after-change-hook t)
-  (setq tabbymacs--TextDocumentIdentifier-cache nil
-		tabbymacs--buffer-languageId-cache nil
-		tabbymacs--current-buffer-version 0))
+	 `(:textDocument ,(tabbymacs--TextDocumentIdentifier)))))
+
+(defun tabbymacs--did-change ()
+  "Send textDocument/didChange notification, batching changes."
+  (when (and tabbymacs--recent-changes tabbymacs--connection buffer-file-name)
+	(let* ((full-sync-p (eq tabbymacs--recent-changes :emacs-messup))
+		   (changes
+			(if full-sync-p
+				(vector `(:text ,(tabbymacs--buffer-content)))
+			  (cl-loop for (beg end len text) in (reverse tabbymacs--recent-changes)
+					   vconcat `[,(list :range `(:start ,beg :end ,end)
+										:rangeLength len
+										:text text)]))))
+	  (jsonrpc-notify
+	   tabbymacs--connection
+	   :textDocument/didChange
+	   (list :textDocument (tabbymacs--VersionedTextDocumentIdentifier)
+			 :contentChanges changes)))
+	  (setq tabbymacs--recent-changes nil
+			tabbymacs--change-idle-timer nil)))
+
+;; ------------------------------
+;; Hooks
+;; ------------------------------
+
+(defun tabbymacs--before-change (beg end)
+  "Record BEG and END before a buffer change."
+  (when (listp tabbymacs--recent-changes)
+	(push `(,(tabbymacs--pos-to-lsp-position beg)
+			,(tabbymacs--pos-to-lsp-position end)
+			(,beg . ,(copy-marker beg nil)) ;; non-inserting marker
+			(,end . ,(copy-marker end t))) ;; inserting marker
+		  tabbymacs--recent-changes)))
+
+(defun tabbymacs--after-change (beg end pre-change-length)
+  "Record buffer state after a change."
+  (cl-incf tabbymacs--current-buffer-version)
+  (pcase (car-safe tabbymacs--recent-changes)
+	(`(,lsp-beg, lsp-end
+				 (,b-beg . ,b-beg-marker)
+				 (,b-end . ,b-end-marker))
+	 (if (and (= b-end b-end-marker) (= b-beg b-beg-marker)
+			  (or (/= beg b-beg) (/= end b-end)))
+		 (setcar tabbymacs--recent-changes
+				 `(,lsp-beg ,lsp-end ,(- b-end-marker b-beg-marker)
+							,(buffer-substring-no-properties b-beg-marker
+															 b-end-marker)))
+	   (setcar tabbymacs--recent-changes
+			   `(,lsp-beg ,lsp-end ,pre-change-length
+						 ,(buffer-substring-no-properties beg end)))))
+	(_ (setq tabbymacs--recent-changes :emacs-messup)))
+  (when tabbymacs--change-idle-timer
+	(cancel-timer tabbymacs--change-idle-timer))
+  (let ((buf (current-buffer)))
+	(setq tabbymacs--change-idle-timer
+		  (run-with-idle-timer
+		   tabbymacs-send-changes-idle-time
+		   nil (lambda ()
+				 (when (buffer-live-p buf)
+				   (with-current-buffer buf
+					 (tabbymacs--did-change))))))))
+
+(defun tabbymacs--enable-change-hooks ()
+  "Enable before and after change hooks for LSP didChange tracking."
+  (add-hook 'before-change-functions #'tabbymacs--before-change nil t)
+  (add-hook 'after-change-functions #'tabbymacs--after-change nil t))
+
+(defun tabbymacs--disable-change-hooks ()
+  "Disable before and after change hooks."
+  (remove-hook 'before-change-functions #'tabbymacs--before-change t)
+  (remove-hook 'after-change-functions #'tabbymacs--after-change t))
+
 
 ;; ------------------------------
 ;; Minor mode
@@ -217,8 +291,17 @@ You can extend this mapping for custom major modes."
   (if tabbymacs-mode
 	  (progn
 		(tabbymacs-connect)
-		(tabbymacs--did-open))
-	(tabbymacs--did-close)
+		(tabbymacs--reset-vars)
+		(tabbymacs--did-open)
+		(tabbymacs--enable-change-hooks))
+	(progn
+	  (when tabbymacs--change-idle-timer
+		(cancel-timer tabbymacs--change-idle-timer))
+	  (when tabbymacs--recent-changes
+		(tabbymacs--did-change))
+	  (tabbymacs--disable-change-hooks)
+	  (tabbymacs--did-close)
+	  (tabbymacs--reset-vars))
 	(unless (cl-some (lambda (buf)
 					   (buffer-local-value 'tabbymacs-mode buf))
 					 (buffer-list))
