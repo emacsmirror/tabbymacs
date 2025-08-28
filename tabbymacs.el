@@ -345,15 +345,19 @@ You can extend this mapping for custom major modes."
   (interactive)
   (tabbymacs--flush-pending-changes)
   (when (and tabbymacs--connection buffer-file-name)
-	(cl-incf tabbymacs--completion-request-id)
-	(let ((req-id tabbymacs--completion-request-id))
+	(let ((req-id (cl-incf tabbymacs--completion-request-id))
+		  (buf (current-buffer)))
 	  (jsonrpc-async-request
 	   tabbymacs--connection
 	   :textDocument/inlineCompletion
 	   (tabbymacs--InlineCompletionParams 1)
 	   :success-fn
 	   (lambda (result)
-		 (tabbymacs--handle-inline-completion2 result))
+		 (when (buffer-live-p buf)
+		   (with-current-buffer buf
+			 (message "id=%d current=%d" req-id tabbymacs--completion-request-id)
+			 (when (= req-id tabbymacs--completion-request-id)
+			   (tabbymacs--handle-inline-completion2 result)))))
 	   :error-fn
 	   (lambda (err)
 		 (when (= req-id tabbymacs--completion-request-id)
