@@ -140,7 +140,7 @@ You can extend this mapping for custom major modes."
 		 (lambda (_conn method params)
 		   (message "[tabby-agent] Notification: %s %S" method params)))))
 
-(defun tabbymacs-connect ()
+(defun tabbymacs--connect ()
   "Connect to tabby-agent if not already connected."
   (unless (and tabbymacs--connection
 			   (jsonrpc-running-p tabbymacs--connection))
@@ -170,7 +170,7 @@ You can extend this mapping for custom major modes."
 	   :error-fn (lambda (err)
 				   (message "Tabby-agent init failed: %S" err))))))
 
-(defun tabbymacs-disconnect ()
+(defun tabbymacs--disconnect ()
   "Shutdown the connection to tabby-agent."
   (when (and tabbymacs--connection
 			 (jsonrpc-running-p tabbymacs--connection))
@@ -279,6 +279,106 @@ You can extend this mapping for custom major modes."
   (remove-hook 'after-change-functions #'tabbymacs--after-change t))
 
 ;; ------------------------------
+;; Inline completion
+;; ------------------------------
+
+(defvar-local tabbymacs--completion-request-id 0
+  "ID for inline completion requests.")
+
+(defvar-local tabbymacs--ghost-overlay nil
+  "Overlay used to display ghost text inline completion.")
+
+(defun tabbymacs--clear-ghost-overlay ()
+  "Remove ghost text overlay if present."
+  (when (overlayp tabbymacs--ghost-overlay)
+	(delete-overlay tabbymacs--ghost-overlay)
+	(setq tabbymacs--ghost-overlay nil)))
+
+(defun tabbymacs--show-ghost-text (text)
+  "Display TEXT as ghost overlay at point."
+  (tabbymacs--clear-ghost-overlay)
+  (let ((ov (make-overlay (point) (point) nil t t)))
+	(overlay-put ov 'after-string
+				 (propertize text 'face 'shadow))
+	(setq tabbymacs--ghost-overlay ov)))
+
+(defun tabbymacs--flush-pending-changes ()
+  "Ensure all textDocument/didChange notifications are sent before requests."
+  (when tabbymacs--change-idle-timer
+	(cancel-timer tabbymacs--change-idle-timer)
+	(setq tabbymacs--change-idle-timer nil))
+  (when tabbymacs--recent-changes
+	(tabbymacs--did-change)))
+
+(defun tabbymacs--TextDocumentPositionParams ()
+  "Return TextDocumentPositionParams object for the current buffer."
+  (list :textDocument (tabbymacs--TextDocumentIdentifier)
+		:position (tabbymacs--pos-to-lsp-position (point))))
+
+(defun tabbymacs--InlineCompletionParams (trigger)
+  (append (tabbymacs--TextDocumentPositionParams)
+		  `(:context (:triggerKind ,trigger))))
+
+(defun tabbymacs--handle-inline-completion (result)
+  "Display the inline completion provided by RESULT."
+  (when (and result (seq-first result))
+	(let* ((item (seq-first result))
+		   (text (plist-get item :insertText)))
+	  (message "Inline suggestion: %s" text))))
+
+(defun tabbymacs--handle-inline-completion2 (result)
+  (let* ((items (plist-get result :items))
+		 (items (cond
+				 ((vectorp items) (append items nil))
+				 ((listp items) items)
+				 (t nil))))
+	(if (and items (plist-get (car items) :insertText))
+		(let ((text (plist-get (car items) :insertText)))
+		  (message "Inline suggestion %s" text))
+	  (message "No inline suggestions."))))
+
+(defun tabbymacs--handle-inline-completion3 (result)
+  (message "SUGGESTION: %s" result))
+
+(defun tabbymacs--inline-completion ()
+  "Request inline completion from tabby-agent at point."
+  (interactive)
+  (tabbymacs--flush-pending-changes)
+  (when (and tabbymacs--connection buffer-file-name)
+	(cl-incf tabbymacs--completion-request-id)
+	(let ((req-id tabbymacs--completion-request-id))
+	  (jsonrpc-async-request
+	   tabbymacs--connection
+	   :textDocument/inlineCompletion
+	   (tabbymacs--InlineCompletionParams 1)
+	   :success-fn
+	   (lambda (result)
+		 (tabbymacs--handle-inline-completion2 result))
+	   :error-fn
+	   (lambda (err)
+		 (when (= req-id tabbymacs--completion-request-id)
+		   (message "Tabby inlineCompletion error: %S" err)
+		   (tabbymacs--clear-ghost-overlay)))))))
+
+(defun tabbymacs-accept-ghost-text ()
+  "Accept currently shown ghost text into buffer."
+  (interactive)
+  (when (overlayp tabbymacs--ghost-overlay)
+	(let ((str (overlay-get tabbymacs--ghost-overlay 'after-string)))
+	  (tabbymacs--clear-ghost-overlay)
+	  (when str
+		(insert (substring-no-properties str))))))
+
+(defvar tabbymacs-mode-map
+  (let ((map (make-sparse-keymap)))
+	(define-key map (kbd "M-TAB") #'tabbymacs--inline-completion)
+	(define-key map (kbd "C-TAB") #'tabbymacs-accept-ghost-text)
+	map)
+  "Keymap for `tabbymacs-mode'.")
+
+
+
+;; ------------------------------
 ;; Minor mode
 ;; ------------------------------
 
@@ -290,7 +390,7 @@ You can extend this mapping for custom major modes."
   :keymap nil
   (if tabbymacs-mode
 	  (progn
-		(tabbymacs-connect)
+		(tabbymacs--connect)
 		(tabbymacs--reset-vars)
 		(tabbymacs--did-open)
 		(tabbymacs--enable-change-hooks))
@@ -305,7 +405,7 @@ You can extend this mapping for custom major modes."
 	(unless (cl-some (lambda (buf)
 					   (buffer-local-value 'tabbymacs-mode buf))
 					 (buffer-list))
-	  (tabbymacs-disconnect))))
+	  (tabbymacs--disconnect))))
 
 (provide 'tabbymacs)
 
