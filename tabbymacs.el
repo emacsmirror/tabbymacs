@@ -28,6 +28,9 @@
   "List of pending buffer changes for textDocument/didChange or
 the symbol `:emacs-messup' if Emacs gave inconsistent data.")
 
+(defvar tabbymacs--debug-buffer "*tabbymacs-log*"
+  "Buffer name for Tabbymacs debug logging.")
+
 ;; ------------------------------
 ;; User configuration
 ;; ------------------------------
@@ -43,6 +46,16 @@ You can extend this mapping for custom major modes."
 (defcustom tabbymacs-send-changes-idle-time 0.5
   "Don't send changes to tabby-agent before Emacs's been idle for this many seconds."
   :type 'number
+  :group 'tabbymacs)
+
+(defcustom tabbymacs-log-level :info
+  "Minimum log level for Tabbymacs.
+Valid values are :debug, :info, :warning, :error.
+Logs below this level will be suppressed."
+  :type '(choice (const :tag "Debug" :debug)
+				 (const :tag "Info" :info)
+				 (const :tag "Warning" :warning)
+				 (const :tag "Error" :error))
   :group 'tabbymacs)
 
 ;; ------------------------------
@@ -72,11 +85,9 @@ You can extend this mapping for custom major modes."
 					(string-remove-suffix "-mode" name))
 				   (t nil))))))
   (unless tabbymacs--buffer-languageId-cache
-	(display-warning
-	 'tabbymacs
-	 (format "Unable to extract languageId for buffer `%s'. Major mode: %s"
-			 (buffer-name) major-mode)
-	 :warning))
+	(tabbymacs--log :warning
+					"Unable to extract languageId for buffer `%s'. Major mode: %s"
+					(buffer-name) major-mode))
   tabbymacs--buffer-languageId-cache)
 
 (defun tabbymacs--TextDocumentIdentifier ()
@@ -115,6 +126,27 @@ You can extend this mapping for custom major modes."
 		tabbymacs--TextDocumentIdentifier-cache nil
 		tabbymacs--buffer-languageId-cache nil))
 
+(defun tabbymacs--log (level fmt &rest args)
+  "Log a message for Tabbymacs.
+LEVEL is one of :debug, :info, :warning, :error.
+FMT and ARGS are like in `message'."
+  (let* ((order '(:debug :info :warning :error))
+		 (min-idx (cl-position tabbymacs-log-level order))
+		 (lvl-idx (cl-position level order)))
+	(when (and lvl-idx min-idx (>= lvl-idx min-idx))
+	  (let ((msg (apply #'format fmt args)))
+		(pcase level
+		  (:debug
+		   (with-current-buffer (get-buffer-create tabbymacs--debug-buffer)
+			 (goto-char (point-max))
+			 (insert (format-time-string "[%Y-%m-%d %H:%M:%S] "))
+			 (insert "[DEBUG] " msg "\n")))
+		  (:info (message "[Tabbymacs] %s" msg))
+		  (:warning (display-warning 'tabbymacs msg :warning))
+		  (:error (display-warning 'tabbymacs msg :error))
+		  (_ (message "[Tabbymacs][UNKNOWN] %s" msg)))))))
+(setq tabbymacs-log-level :debug)
+
 ;; ------------------------------
 ;; JSONRPC Connection
 ;; ------------------------------
@@ -134,11 +166,15 @@ You can extend this mapping for custom major modes."
 					 :stderr "*tabby-agent-stderr*"))
 		 :request-dispatcher
 		 (lambda (_conn method params)
-		   (message "[tabby-agent] Request from server: %s %S" method params)
+		   (tabbymacs--log :debug
+						   "[tabby-agent] Request from server: %s %S"
+						   method params)
 		   nil)
 		 :notification-dispatcher
 		 (lambda (_conn method params)
-		   (message "[tabby-agent] Notification: %s %S" method params)))))
+		   (tabbymacs--log :debug
+						   "[tabby-agent] Notification: %s %S"
+						   method params)))))
 
 (defun tabbymacs--connect ()
   "Connect to tabby-agent if not already connected."
@@ -166,9 +202,9 @@ You can extend this mapping for custom major modes."
 					 (jsonrpc-notify
 					  tabbymacs--connection
 					  :initialized nil)
-					 (message "Tabby-agent initialized."))
+					 (tabbymacs--log :info "Tabby-agent initialized."))
 	   :error-fn (lambda (err)
-				   (message "Tabby-agent init failed: %S" err))))))
+				   (tabbymacs--log :error "Tabby-agent init failed: %S" err))))))
 
 (defun tabbymacs--disconnect ()
   "Shutdown the connection to tabby-agent."
@@ -184,9 +220,9 @@ You can extend this mapping for custom major modes."
 				   (jsonrpc-shutdown
 					tabbymacs--connection)
 				   (setq tabbymacs--connection nil)
-				   (message "Stopped tabby-agent connection."))
+				   (tabbymacs--log :info "Stopped tabby-agent connection."))
 	 :error-fn (lambda (err)
-				 (message "tabby-agent shutdown failed: %S" err)))))
+				 (tabbymacs--log :error "tabby-agent shutdown failed: %S" err)))))
 
 ;; ------------------------------
 ;; Buffer notifications
@@ -321,12 +357,6 @@ You can extend this mapping for custom major modes."
 
 (defun tabbymacs--handle-inline-completion (result)
   "Display the inline completion provided by RESULT."
-  (when (and result (seq-first result))
-	(let* ((item (seq-first result))
-		   (text (plist-get item :insertText)))
-	  (message "Inline suggestion: %s" text))))
-
-(defun tabbymacs--handle-inline-completion2 (result)
   (let* ((items (plist-get result :items))
 		 (items (cond
 				 ((vectorp items) (append items nil))
@@ -334,11 +364,8 @@ You can extend this mapping for custom major modes."
 				 (t nil))))
 	(if (and items (plist-get (car items) :insertText))
 		(let ((text (plist-get (car items) :insertText)))
-		  (message "Inline suggestion %s" text))
-	  (message "No inline suggestions."))))
-
-(defun tabbymacs--handle-inline-completion3 (result)
-  (message "SUGGESTION: %s" result))
+		  (tabbymacs--log :info "Inline suggestion %s" text))
+	  (tabbymacs--log :info "No inline suggestions."))))
 
 (defun tabbymacs--inline-completion ()
   "Request inline completion from tabby-agent at point."
@@ -355,14 +382,15 @@ You can extend this mapping for custom major modes."
 	   (lambda (result)
 		 (when (buffer-live-p buf)
 		   (with-current-buffer buf
-			 (message "id=%d current=%d" req-id tabbymacs--completion-request-id)
 			 (when (= req-id tabbymacs--completion-request-id)
-			   (tabbymacs--handle-inline-completion2 result)))))
+			   (tabbymacs--handle-inline-completion result)))))
 	   :error-fn
 	   (lambda (err)
-		 (when (= req-id tabbymacs--completion-request-id)
-		   (message "Tabby inlineCompletion error: %S" err)
-		   (tabbymacs--clear-ghost-overlay)))))))
+		 (when (buffer-live-p buf)
+		   (with-current-buffer buf
+			 (when (= req-id tabbymacs--completion-request-id)
+			   (tabbymacs--log :error "inlineCompletion error: %S" err)
+			   (tabbymacs--clear-ghost-overlay)))))))))
 
 (defun tabbymacs-accept-ghost-text ()
   "Accept currently shown ghost text into buffer."
