@@ -314,12 +314,14 @@ FMT and ARGS are like in `message'."
 (defun tabbymacs--enable-change-hooks ()
   "Enable before and after change hooks for LSP didChange tracking."
   (add-hook 'before-change-functions #'tabbymacs--before-change nil t)
-  (add-hook 'after-change-functions #'tabbymacs--after-change nil t))
+  (add-hook 'after-change-functions #'tabbymacs--after-change nil t)
+  (add-hook 'post-self-insert-hook #'tabbymacs--schedule-inline-completion nil t))
 
 (defun tabbymacs--disable-change-hooks ()
   "Disable before and after change hooks."
   (remove-hook 'before-change-functions #'tabbymacs--before-change t)
-  (remove-hook 'after-change-functions #'tabbymacs--after-change t))
+  (remove-hook 'after-change-functions #'tabbymacs--after-change t)
+  (remove-hook 'post-self-insert-hook #'tabbymacs--schedule-inline-completion t))
 
 ;; ------------------------------
 ;; Inline completion
@@ -330,6 +332,28 @@ FMT and ARGS are like in `message'."
 
 (defvar-local tabbymacs--ghost-overlay nil
   "Overlay used to display ghost text inline completion.")
+
+(defvar-local tabbymacs--inline-completion-idle-timer nil
+  "Idle timer for throttling inline completion requests.")
+
+(defcustom tabbymacs-inline-completion-idle-time 1.0
+  "Idle dalay (seconds) after user input before sending inlineCompletion request."
+  :type 'number
+  :group 'tabbymacs)
+
+(defun tabbymacs--schedule-inline-completion ()
+  "Schedule an inlineCompletion request after idle."
+  (when tabbymacs--inline-completion-idle-timer
+	(cancel-timer tabbymacs--inline-completion-idle-timer))
+  (let ((buf (current-buffer)))
+	(setq tabbymacs--inline-completion-idle-timer
+		  (run-with-idle-timer
+		   tabbymacs-inline-completion-idle-time nil
+		   (lambda ()
+			 (when (buffer-live-p buf)
+			   (with-current-buffer buf
+				 (when tabbymacs-mode
+				   (tabbymacs--inline-completion)))))))))
 
 (defun tabbymacs--clear-ghost-overlay ()
   "Remove ghost text overlay if present."
@@ -414,8 +438,6 @@ FMT and ARGS are like in `message'."
 	(define-key map (kbd "C-TAB") #'tabbymacs-accept-ghost-text)
 	map)
   "Keymap for `tabbymacs-mode'.")
-
-
 
 ;; ------------------------------
 ;; Minor mode
