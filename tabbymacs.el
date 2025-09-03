@@ -116,6 +116,16 @@ Logs below this level will be suppressed."
 		  (list :languageId (tabbymacs--buffer-languageId)
 				:text (tabbymacs--buffer-content))))
 
+(defun tabbymacs--TextDocumentContentChangeEvents ()
+  "Return list of TextDocumentContentChangeEvent objects for the current buffer."
+  (let ((full-sync-p (eq tabbymacs--recent-changes :emacs-messup)))
+	(if full-sync-p
+		(vector (list :text (tabbymacs--buffer-content)))
+	  (cl-loop for (beg end len text) in (reverse tabbymacs--recent-changes)
+			   vconcat `[,(list :range `(:start ,beg :end ,end)
+								:rangeLength len
+								:text text)]))))
+
 (defun tabbymacs--pos-to-lsp-position (pos)
   "Convert buffer position POS to an LSP position."
   (save-excursion
@@ -252,21 +262,13 @@ FMT and ARGS are like in `message'."
 (defun tabbymacs--did-change ()
   "Send textDocument/didChange notification, batching changes."
   (when (and tabbymacs--recent-changes tabbymacs--connection buffer-file-name)
-	(let* ((full-sync-p (eq tabbymacs--recent-changes :emacs-messup))
-		   (changes
-			(if full-sync-p
-				(vector `(:text ,(tabbymacs--buffer-content)))
-			  (cl-loop for (beg end len text) in (reverse tabbymacs--recent-changes)
-					   vconcat `[,(list :range `(:start ,beg :end ,end)
-										:rangeLength len
-										:text text)]))))
-	  (jsonrpc-notify
-	   tabbymacs--connection
-	   :textDocument/didChange
-	   (list :textDocument (tabbymacs--VersionedTextDocumentIdentifier)
-			 :contentChanges changes)))
-	  (setq tabbymacs--recent-changes nil
-			tabbymacs--change-idle-timer nil)))
+	(jsonrpc-notify
+	 tabbymacs--connection
+	 :textDocument/didChange
+	 (list :textDocument (tabbymacs--VersionedTextDocumentIdentifier)
+		   :contentChanges (tabbymacs--TextDocumentContentChangeEvents))))
+  (setq tabbymacs--recent-changes nil
+		tabbymacs--change-idle-timer nil))
 
 ;; ------------------------------
 ;; Hooks
