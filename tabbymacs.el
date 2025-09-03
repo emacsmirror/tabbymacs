@@ -35,6 +35,11 @@ the symbol `:emacs-messup' if Emacs gave inconsistent data.")
 ;; User configuration
 ;; ------------------------------
 
+(defgroup tabbymacs nil
+  "LSP client for interacting with tabby-agent (Tabby LLM)."
+  :prefix "tabbymacs-"
+  :group 'tools)
+
 (defcustom tabbymacs-language-id-configuration
   '((c++-ts-mode . "cpp")
 	(c++-mode . "cpp"))
