@@ -63,6 +63,12 @@ Logs below this level will be suppressed."
 				 (const :tag "Error" :error))
   :group 'tabbymacs)
 
+(defcustom tabbymacs-auto-trigger t
+  "If non-nil, automatically request inline completions after user input."
+  :type 'boolean
+  :group 'tabbymacs)
+(setq tabbymacs-auto-trigger t)
+
 ;; ------------------------------
 ;; Utility functions
 ;; ------------------------------
@@ -311,17 +317,19 @@ FMT and ARGS are like in `message'."
 				   (with-current-buffer buf
 					 (tabbymacs--did-change))))))))
 
-(defun tabbymacs--enable-change-hooks ()
+(defun tabbymacs--enable-hooks ()
   "Enable before and after change hooks for LSP didChange tracking."
   (add-hook 'before-change-functions #'tabbymacs--before-change nil t)
   (add-hook 'after-change-functions #'tabbymacs--after-change nil t)
-  (add-hook 'post-self-insert-hook #'tabbymacs--schedule-inline-completion nil t))
+  (when tabbymacs-auto-trigger
+	  (add-hook 'post-self-insert-hook #'tabbymacs--schedule-inline-completion nil t)))
 
-(defun tabbymacs--disable-change-hooks ()
+(defun tabbymacs--disable-hooks ()
   "Disable before and after change hooks."
   (remove-hook 'before-change-functions #'tabbymacs--before-change t)
   (remove-hook 'after-change-functions #'tabbymacs--after-change t)
-  (remove-hook 'post-self-insert-hook #'tabbymacs--schedule-inline-completion t))
+  (when tabbymacs-auto-trigger
+	(remove-hook 'post-self-insert-hook #'tabbymacs--schedule-inline-completion t)))
 
 ;; ------------------------------
 ;; Inline completion
@@ -341,6 +349,11 @@ FMT and ARGS are like in `message'."
   :type 'number
   :group 'tabbymacs)
 
+(defconst tabbymacs--triggerKind-map
+  '((:invoked . 1)
+	(:automatic . 2))
+  "Mapping from trigger kind keywords to LSP numeric values.")
+
 (defun tabbymacs--schedule-inline-completion ()
   "Schedule an inlineCompletion request after idle."
   (when tabbymacs--inline-completion-idle-timer
@@ -352,8 +365,7 @@ FMT and ARGS are like in `message'."
 		   (lambda ()
 			 (when (buffer-live-p buf)
 			   (with-current-buffer buf
-				 (when tabbymacs-mode
-				   (tabbymacs--inline-completion)))))))))
+				 (tabbymacs--auto-inline-completion))))))))
 
 (defun tabbymacs--clear-ghost-overlay ()
   "Remove ghost text overlay if present."
@@ -382,9 +394,13 @@ FMT and ARGS are like in `message'."
   (list :textDocument (tabbymacs--TextDocumentIdentifier)
 		:position (tabbymacs--pos-to-lsp-position (point))))
 
-(defun tabbymacs--InlineCompletionParams (trigger)
-  (append (tabbymacs--TextDocumentPositionParams)
-		  `(:context (:triggerKind ,trigger))))
+(defun tabbymacs--InlineCompletionParams (trigger-kind)
+  "Return InlineCompletionParams object.
+TRIGGER-KIND should be one of :invoked or :automatic."
+  (let ((kind (or (cdr (assoc trigger-kind tabbymacs--triggerKind-map))
+				  1)))
+	(append (tabbymacs--TextDocumentPositionParams)
+			`(:context (:triggerKind ,kind)))))
 
 (defun tabbymacs--handle-inline-completion (result)
   "Display the inline completion provided by RESULT."
@@ -398,9 +414,21 @@ FMT and ARGS are like in `message'."
 		  (tabbymacs--log :info "Inline suggestion %s" text))
 	  (tabbymacs--log :info "No inline suggestions."))))
 
-(defun tabbymacs--inline-completion ()
-  "Request inline completion from tabby-agent at point."
+(defun tabbymacs--auto-inline-completion ()
+  "Request inline completion automatically, if enabled."
+  (when (and tabbymacs-auto-trigger
+			 (not (minibufferp))
+			 (not (eq this-command 'tabbymacs--invoked-inline-completion))) ;; don't recurse
+	(tabbymacs--inline-completion :automatic)))
+
+(defun tabbymacs--invoked-inline-completion ()
+  "Request inline completion manually at point."
   (interactive)
+  (tabbymacs--inline-completion :invoked))
+
+(defun tabbymacs--inline-completion (trigger-kind)
+  "Request inline completion from tabby-agent at point.
+TRIGGER-KIND is :invoked (manual) or :automatic (after typing)."
   (tabbymacs--flush-pending-changes)
   (when (and tabbymacs--connection buffer-file-name)
 	(let ((req-id (cl-incf tabbymacs--completion-request-id))
@@ -408,7 +436,7 @@ FMT and ARGS are like in `message'."
 	  (jsonrpc-async-request
 	   tabbymacs--connection
 	   :textDocument/inlineCompletion
-	   (tabbymacs--InlineCompletionParams 1)
+	   (tabbymacs--InlineCompletionParams trigger-kind)
 	   :success-fn
 	   (lambda (result)
 		 (when (buffer-live-p buf)
@@ -462,11 +490,11 @@ FMT and ARGS are like in `message'."
 		(tabbymacs--did-change))
 	  (tabbymacs--disable-change-hooks)
 	  (tabbymacs--did-close)
-	  (tabbymacs--reset-vars))
-	(unless (cl-some (lambda (buf)
-					   (buffer-local-value 'tabbymacs-mode buf))
-					 (buffer-list))
-	  (tabbymacs--disconnect))))
+	  (tabbymacs--reset-vars)
+	  (unless (cl-some (lambda (buf)
+						 (buffer-local-value 'tabbymacs-mode buf))
+					   (buffer-list))
+		(tabbymacs--disconnect)))))
 
 (provide 'tabbymacs)
 
