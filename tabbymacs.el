@@ -366,7 +366,7 @@ TRIGGER-KIND is :invoked (manual) or :automatic (after typing)."
 ;; ------------------------------
 
 (defun tabbymacs--before-change (beg end)
-  "Record BEG and END before a buffer change."
+  "Record BEG and END (as positions and markers) before a buffer change."
   (when (listp tabbymacs--recent-changes)
 	(push `(,(tabbymacs--pos-to-lsp-position beg)
 			,(tabbymacs--pos-to-lsp-position end)
@@ -375,8 +375,14 @@ TRIGGER-KIND is :invoked (manual) or :automatic (after typing)."
 		  tabbymacs--recent-changes)))
 
 (defun tabbymacs--after-change (beg end pre-change-length)
-  "Record buffer state after a change."
+  "Record BEG, END, PRE-CHANGE-LENGTH and changed TEXT."
   (cl-incf tabbymacs--current-buffer-version)
+  (tabbymacs--process-recent-change)
+  (tabbymacs--schedule-did-change))
+
+(defun tabbymacs--process-recent-change ()
+  "Processes the most recent change record.
+See Eglot's eglot--after-change function and Eglot's issues #259 and #367 for reference."
   (pcase (car-safe tabbymacs--recent-changes)
 	(`(,lsp-beg, lsp-end
 				 (,b-beg . ,b-beg-marker)
@@ -390,7 +396,10 @@ TRIGGER-KIND is :invoked (manual) or :automatic (after typing)."
 	   (setcar tabbymacs--recent-changes
 			   `(,lsp-beg ,lsp-end ,pre-change-length
 						 ,(buffer-substring-no-properties beg end)))))
-	(_ (setq tabbymacs--recent-changes :emacs-messup)))
+	(_ (setq tabbymacs--recent-changes :emacs-messup))))
+
+(defun tabbymacs--schedule-did-change ()
+  "Schedule an didChange notification after idle."
   (when tabbymacs--change-idle-timer
 	(cancel-timer tabbymacs--change-idle-timer))
   (let ((buf (current-buffer)))
