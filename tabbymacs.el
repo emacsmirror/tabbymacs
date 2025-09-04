@@ -377,10 +377,10 @@ TRIGGER-KIND is :invoked (manual) or :automatic (after typing)."
 (defun tabbymacs--after-change (beg end pre-change-length)
   "Record BEG, END, PRE-CHANGE-LENGTH and changed TEXT."
   (cl-incf tabbymacs--current-buffer-version)
-  (tabbymacs--process-recent-change)
+  (tabbymacs--process-recent-change beg end pre-change-length)
   (tabbymacs--schedule-did-change))
 
-(defun tabbymacs--process-recent-change ()
+(defun tabbymacs--process-recent-change (beg end pre-change-length)
   "Processes the most recent change record.
 See Eglot's eglot--after-change function and Eglot's issues #259 and #367 for reference."
   (pcase (car-safe tabbymacs--recent-changes)
@@ -410,7 +410,7 @@ See Eglot's eglot--after-change function and Eglot's issues #259 and #367 for re
 				 (when (buffer-live-p buf)
 				   (with-current-buffer buf
 					 (tabbymacs--did-change)
-					 (tabbymacs--change-idle-timer nil))))))))
+					 (setq tabbymacs--change-idle-timer nil))))))))
 
 (defun tabbymacs--schedule-inline-completion ()
   "Schedule an inlineCompletion request after idle."
