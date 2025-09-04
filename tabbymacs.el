@@ -318,14 +318,15 @@ FMT and ARGS are like in `message'."
 					 (tabbymacs--did-change))))))))
 
 (defun tabbymacs--enable-hooks ()
-  "Enable before and after change hooks for LSP didChange tracking."
+  "Enable before and after change hooks for LSP didChange tracking
+and post-self-insert hook for inlineCompletion."
   (add-hook 'before-change-functions #'tabbymacs--before-change nil t)
   (add-hook 'after-change-functions #'tabbymacs--after-change nil t)
   (when tabbymacs-auto-trigger
 	  (add-hook 'post-self-insert-hook #'tabbymacs--schedule-inline-completion nil t)))
 
 (defun tabbymacs--disable-hooks ()
-  "Disable before and after change hooks."
+  "Disable before and after change hooks as well as post-self-insert."
   (remove-hook 'before-change-functions #'tabbymacs--before-change t)
   (remove-hook 'after-change-functions #'tabbymacs--after-change t)
   (when tabbymacs-auto-trigger
@@ -482,13 +483,13 @@ TRIGGER-KIND is :invoked (manual) or :automatic (after typing)."
 		(tabbymacs--connect)
 		(tabbymacs--reset-vars)
 		(tabbymacs--did-open)
-		(tabbymacs--enable-change-hooks))
+		(tabbymacs--enable-hooks))
 	(progn
 	  (when tabbymacs--change-idle-timer
 		(cancel-timer tabbymacs--change-idle-timer))
 	  (when tabbymacs--recent-changes
 		(tabbymacs--did-change))
-	  (tabbymacs--disable-change-hooks)
+	  (tabbymacs--disable-hooks)
 	  (tabbymacs--did-close)
 	  (tabbymacs--reset-vars)
 	  (unless (cl-some (lambda (buf)
