@@ -28,6 +28,12 @@
   "List of pending buffer changes for textDocument/didChange or
 the symbol `:emacs-messup' if Emacs gave inconsistent data.")
 
+(defvar-local tabbymacs--completion-request-id 0
+  "ID for inline completion requests.")
+
+(defvar-local tabbymacs--inline-completion-idle-timer nil
+  "Idle timer for throttling inline completion requests.")
+
 (defvar tabbymacs--debug-buffer "*tabbymacs-log*"
   "Buffer name for Tabbymacs debug logging.")
 
@@ -53,6 +59,16 @@ You can extend this mapping for custom major modes."
   :type 'number
   :group 'tabbymacs)
 
+(defcustom tabbymacs-inline-completion-idle-time 1.0
+  "Idle dalay (seconds) after user input before sending inlineCompletion request."
+  :type 'number
+  :group 'tabbymacs)
+
+(defcustom tabbymacs-auto-trigger t
+  "If non-nil, automatically request inline completions after user input."
+  :type 'boolean
+  :group 'tabbymacs)
+
 (defcustom tabbymacs-log-level :info
   "Minimum log level for Tabbymacs.
 Valid values are :debug, :info, :warning, :error.
@@ -63,11 +79,14 @@ Logs below this level will be suppressed."
 				 (const :tag "Error" :error))
   :group 'tabbymacs)
 
-(defcustom tabbymacs-auto-trigger t
-  "If non-nil, automatically request inline completions after user input."
-  :type 'boolean
-  :group 'tabbymacs)
-(setq tabbymacs-auto-trigger t)
+;; ------------------------------
+;; Constants
+;; ------------------------------
+
+(defconst tabbymacs--triggerKind-map
+  '((:invoked . 1)
+	(:automatic . 2))
+  "Mapping from trigger kind keywords to LSP numeric values.")
 
 ;; ------------------------------
 ;; Utility functions
@@ -132,20 +151,25 @@ Logs below this level will be suppressed."
 								:rangeLength len
 								:text text)]))))
 
+(defun tabbymacs--TextDocumentPositionParams ()
+  "Return TextDocumentPositionParams object for the current buffer."
+  (list :textDocument (tabbymacs--TextDocumentIdentifier)
+		:position (tabbymacs--pos-to-lsp-position (point))))
+
+(defun tabbymacs--InlineCompletionParams (trigger-kind)
+  "Return InlineCompletionParams object.
+TRIGGER-KIND should be one of :invoked or :automatic."
+  (let ((kind (or (cdr (assoc trigger-kind tabbymacs--triggerKind-map))
+				  1)))
+	(append (tabbymacs--TextDocumentPositionParams)
+			`(:context (:triggerKind ,kind)))))
+
 (defun tabbymacs--pos-to-lsp-position (pos)
   "Convert buffer position POS to an LSP position."
   (save-excursion
 	(goto-char pos)
 	(list :line (1- (line-number-at-pos))
 		  :character (- (point) (line-beginning-position)))))
-
-(defun tabbymacs--reset-vars ()
-  "Reset buffer local caches and vars."
-  (setq tabbymacs--recent-changes nil
-		tabbymacs--current-buffer-version 0
-		tabbymacs--change-idle-timer nil
-		tabbymacs--TextDocumentIdentifier-cache nil
-		tabbymacs--buffer-languageId-cache nil))
 
 (defun tabbymacs--log (level fmt &rest args)
   "Log a message for Tabbymacs.
@@ -273,8 +297,69 @@ FMT and ARGS are like in `message'."
 	 :textDocument/didChange
 	 (list :textDocument (tabbymacs--VersionedTextDocumentIdentifier)
 		   :contentChanges (tabbymacs--TextDocumentContentChangeEvents))))
-  (setq tabbymacs--recent-changes nil
-		tabbymacs--change-idle-timer nil))
+  (setq tabbymacs--recent-changes nil))
+
+;; ------------------------------
+;; Inline completion
+;; ------------------------------
+
+(defun tabbymacs--flush-pending-changes ()
+  "Ensure all textDocument/didChange notifications are sent before requests."
+  (when tabbymacs--change-idle-timer
+	(cancel-timer tabbymacs--change-idle-timer)
+	(setq tabbymacs--change-idle-timer nil))
+  (when tabbymacs--recent-changes
+	(tabbymacs--did-change)))
+
+(defun tabbymacs--auto-inline-completion ()
+  "Request inline completion automatically, if enabled."
+  (when (and tabbymacs-auto-trigger
+			 (not (minibufferp))
+			 (not (eq this-command 'tabbymacs--invoked-inline-completion))) ;; don't recurse
+	(tabbymacs--inline-completion :automatic)))
+
+(defun tabbymacs--invoked-inline-completion ()
+  "Request inline completion manually at point."
+  (interactive)
+  (tabbymacs--inline-completion :invoked))
+
+(defun tabbymacs--inline-completion (trigger-kind)
+  "Request inline completion from tabby-agent at point.
+TRIGGER-KIND is :invoked (manual) or :automatic (after typing)."
+  (tabbymacs--flush-pending-changes)
+  (when (and tabbymacs--connection buffer-file-name)
+	(let ((req-id (cl-incf tabbymacs--completion-request-id))
+		  (buf (current-buffer)))
+	  (jsonrpc-async-request
+	   tabbymacs--connection
+	   :textDocument/inlineCompletion
+	   (tabbymacs--InlineCompletionParams trigger-kind)
+	   :success-fn
+	   (lambda (result)
+		 (when (buffer-live-p buf)
+		   (with-current-buffer buf
+			 (when (= req-id tabbymacs--completion-request-id)
+			   (tabbymacs--handle-inline-completion result)))))
+	   :error-fn
+	   (lambda (err)
+		 (when (buffer-live-p buf)
+		   (with-current-buffer buf
+			 (when (= req-id tabbymacs--completion-request-id)
+			   (tabbymacs--log :error "inlineCompletion error: %S" err)
+			   (tabbymacs--clear-ghost-overlay)))))))))
+
+(defun tabbymacs--handle-inline-completion (result)
+  "Display the inline completion provided by RESULT."
+  (let* ((items (plist-get result :items))
+		 (items (cond
+				 ((vectorp items) (append items nil))
+				 ((listp items) items)
+				 (t nil))))
+	(if (and items (plist-get (car items) :insertText))
+		(let ((text (plist-get (car items) :insertText)))
+		  (tabbymacs--log :info "Inline suggestion
+%s" text))
+	  (tabbymacs--log :info "No inline suggestions."))))
 
 ;; ------------------------------
 ;; Hooks
@@ -315,7 +400,21 @@ FMT and ARGS are like in `message'."
 		   nil (lambda ()
 				 (when (buffer-live-p buf)
 				   (with-current-buffer buf
-					 (tabbymacs--did-change))))))))
+					 (tabbymacs--did-change)
+					 (tabbymacs--change-idle-timer nil))))))))
+
+(defun tabbymacs--schedule-inline-completion ()
+  "Schedule an inlineCompletion request after idle."
+  (when tabbymacs--inline-completion-idle-timer
+	(cancel-timer tabbymacs--inline-completion-idle-timer))
+  (let ((buf (current-buffer)))
+	(setq tabbymacs--inline-completion-idle-timer
+		  (run-with-idle-timer
+		   tabbymacs-inline-completion-idle-time nil
+		   (lambda ()
+			 (when (buffer-live-p buf)
+			   (with-current-buffer buf
+				 (tabbymacs--auto-inline-completion))))))))
 
 (defun tabbymacs--enable-hooks ()
   "Enable before and after change hooks for LSP didChange tracking
@@ -333,40 +432,11 @@ and post-self-insert hook for inlineCompletion."
 	(remove-hook 'post-self-insert-hook #'tabbymacs--schedule-inline-completion t)))
 
 ;; ------------------------------
-;; Inline completion
+;; Ghost text
 ;; ------------------------------
-
-(defvar-local tabbymacs--completion-request-id 0
-  "ID for inline completion requests.")
 
 (defvar-local tabbymacs--ghost-overlay nil
   "Overlay used to display ghost text inline completion.")
-
-(defvar-local tabbymacs--inline-completion-idle-timer nil
-  "Idle timer for throttling inline completion requests.")
-
-(defcustom tabbymacs-inline-completion-idle-time 1.0
-  "Idle dalay (seconds) after user input before sending inlineCompletion request."
-  :type 'number
-  :group 'tabbymacs)
-
-(defconst tabbymacs--triggerKind-map
-  '((:invoked . 1)
-	(:automatic . 2))
-  "Mapping from trigger kind keywords to LSP numeric values.")
-
-(defun tabbymacs--schedule-inline-completion ()
-  "Schedule an inlineCompletion request after idle."
-  (when tabbymacs--inline-completion-idle-timer
-	(cancel-timer tabbymacs--inline-completion-idle-timer))
-  (let ((buf (current-buffer)))
-	(setq tabbymacs--inline-completion-idle-timer
-		  (run-with-idle-timer
-		   tabbymacs-inline-completion-idle-time nil
-		   (lambda ()
-			 (when (buffer-live-p buf)
-			   (with-current-buffer buf
-				 (tabbymacs--auto-inline-completion))))))))
 
 (defun tabbymacs--clear-ghost-overlay ()
   "Remove ghost text overlay if present."
@@ -381,76 +451,6 @@ and post-self-insert hook for inlineCompletion."
 	(overlay-put ov 'after-string
 				 (propertize text 'face 'shadow))
 	(setq tabbymacs--ghost-overlay ov)))
-
-(defun tabbymacs--flush-pending-changes ()
-  "Ensure all textDocument/didChange notifications are sent before requests."
-  (when tabbymacs--change-idle-timer
-	(cancel-timer tabbymacs--change-idle-timer)
-	(setq tabbymacs--change-idle-timer nil))
-  (when tabbymacs--recent-changes
-	(tabbymacs--did-change)))
-
-(defun tabbymacs--TextDocumentPositionParams ()
-  "Return TextDocumentPositionParams object for the current buffer."
-  (list :textDocument (tabbymacs--TextDocumentIdentifier)
-		:position (tabbymacs--pos-to-lsp-position (point))))
-
-(defun tabbymacs--InlineCompletionParams (trigger-kind)
-  "Return InlineCompletionParams object.
-TRIGGER-KIND should be one of :invoked or :automatic."
-  (let ((kind (or (cdr (assoc trigger-kind tabbymacs--triggerKind-map))
-				  1)))
-	(append (tabbymacs--TextDocumentPositionParams)
-			`(:context (:triggerKind ,kind)))))
-
-(defun tabbymacs--handle-inline-completion (result)
-  "Display the inline completion provided by RESULT."
-  (let* ((items (plist-get result :items))
-		 (items (cond
-				 ((vectorp items) (append items nil))
-				 ((listp items) items)
-				 (t nil))))
-	(if (and items (plist-get (car items) :insertText))
-		(let ((text (plist-get (car items) :insertText)))
-		  (tabbymacs--log :info "Inline suggestion %s" text))
-	  (tabbymacs--log :info "No inline suggestions."))))
-
-(defun tabbymacs--auto-inline-completion ()
-  "Request inline completion automatically, if enabled."
-  (when (and tabbymacs-auto-trigger
-			 (not (minibufferp))
-			 (not (eq this-command 'tabbymacs--invoked-inline-completion))) ;; don't recurse
-	(tabbymacs--inline-completion :automatic)))
-
-(defun tabbymacs--invoked-inline-completion ()
-  "Request inline completion manually at point."
-  (interactive)
-  (tabbymacs--inline-completion :invoked))
-
-(defun tabbymacs--inline-completion (trigger-kind)
-  "Request inline completion from tabby-agent at point.
-TRIGGER-KIND is :invoked (manual) or :automatic (after typing)."
-  (tabbymacs--flush-pending-changes)
-  (when (and tabbymacs--connection buffer-file-name)
-	(let ((req-id (cl-incf tabbymacs--completion-request-id))
-		  (buf (current-buffer)))
-	  (jsonrpc-async-request
-	   tabbymacs--connection
-	   :textDocument/inlineCompletion
-	   (tabbymacs--InlineCompletionParams trigger-kind)
-	   :success-fn
-	   (lambda (result)
-		 (when (buffer-live-p buf)
-		   (with-current-buffer buf
-			 (when (= req-id tabbymacs--completion-request-id)
-			   (tabbymacs--handle-inline-completion result)))))
-	   :error-fn
-	   (lambda (err)
-		 (when (buffer-live-p buf)
-		   (with-current-buffer buf
-			 (when (= req-id tabbymacs--completion-request-id)
-			   (tabbymacs--log :error "inlineCompletion error: %S" err)
-			   (tabbymacs--clear-ghost-overlay)))))))))
 
 (defun tabbymacs-accept-ghost-text ()
   "Accept currently shown ghost text into buffer."
@@ -471,6 +471,16 @@ TRIGGER-KIND is :invoked (manual) or :automatic (after typing)."
 ;; ------------------------------
 ;; Minor mode
 ;; ------------------------------
+
+(defun tabbymacs--reset-vars ()
+  "Reset buffer local caches and vars."
+  (setq tabbymacs--recent-changes nil
+		tabbymacs--current-buffer-version 0
+		tabbymacs--change-idle-timer nil
+		tabbymacs--TextDocumentIdentifier-cache nil
+		tabbymacs--buffer-languageId-cache nil
+		tabbymacs--inline-completion-idle-timer nil
+		tabbymacs--completion-request-id 0))
 
 ;;;###autoload
 (define-minor-mode tabbymacs-mode
