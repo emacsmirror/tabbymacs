@@ -464,6 +464,7 @@ and post-self-insert hook for inlineCompletion."
   (remove-hook 'post-self-insert-hook #'tabbymacs--test-completion t))
 
 (defun tabbymacs--test-completion ()
+  (interactive)
   (tabbymacs--show-ghost-text "int main() {
     return 0
 };"))
@@ -494,7 +495,7 @@ and post-self-insert hook for inlineCompletion."
 
 (defvar tabbymacs-mode-map
   (let ((map (make-sparse-keymap)))
-	(define-key map (kbd "C-c C-.") #'tabbymacs--invoked-inline-completion)
+	(define-key map (kbd "C-c /") #'tabbymacs--test-completion)
 	(define-key map (kbd "TAB") #'tabbymacs-accept-ghost-text)
 	map)
   "Keymap for `tabbymacs-mode'.")
@@ -523,8 +524,8 @@ and post-self-insert hook for inlineCompletion."
 	  (progn
 		(tabbymacs--connect)
 		(tabbymacs--reset-vars)
-		(tabbymacs--did-open)
-		(tabbymacs--test-hooks))
+		(tabbymacs--did-open))
+		;(tabbymacs--test-hooks))
 		;(tabbymacs--enable-hooks))
 	(progn
 	  (when tabbymacs--change-idle-timer
@@ -532,7 +533,7 @@ and post-self-insert hook for inlineCompletion."
 	  (when tabbymacs--recent-changes
 		(tabbymacs--did-change))
 	  ;(tabbymacs--disable-hooks)
-	  (tabbymacs--test-dhooks)
+	  ;(tabbymacs--test-dhooks)
 	  (tabbymacs--did-close)
 	  (tabbymacs--reset-vars)
 	  (unless (cl-some (lambda (buf)
