@@ -472,18 +472,31 @@ and post-self-insert hook for inlineCompletion."
 (defvar-local tabbymacs--overlay nil
   "Overlay used to display ghost text inline completion.")
 
+(defvar-local tabbymacs--start-point nil
+  "The point where the completion started.")
+
+(defvar-local tabbymacs--current nil
+  "The current suggestion to be displayed.")
+
+(defface tabbymacs-overlay-face
+  '((t :inherit shadow))
+  "Face for the inline code suggestions overlay."
+  :group 'tabbymacs)
+
 (defun tabbymacs--clear-overlay ()
   "Remove ghost text overlay if present."
   (when (overlayp tabbymacs--overlay)
 	(delete-overlay tabbymacs--overlay))
-  (setq tabbymacs--overlay nil))
+  (setq tabbymacs--overlay nil)
+  (tabbymacs--deactivate-overlay-map))
 
 (defun tabbymacs--show-ghost-text (text)
   (tabbymacs--clear-overlay)
   (let ((ov (make-overlay (point) (point) nil t t)))
 	(overlay-put ov 'after-string
 				 (propertize text 'face 'shadow))
-	(setq tabbymacs--overlay ov)))
+	(setq tabbymacs--overlay ov)
+	(tabbymacs--activate-overlay-map)))
 
 (defun tabbymacs-accept-ghost-text ()
   (interactive)
@@ -493,10 +506,41 @@ and post-self-insert hook for inlineCompletion."
 	  (when str
 		(insert (substring-no-properties str))))))
 
+(defun tabbymacs-cancel-ghost-text ()
+  "Cancel ghost text overlay."
+  (interactive)
+  (let ((was-active (overlayp tabbymacs--overlay)))
+	(tabbymacs--clear-overlay)
+	(when was-active
+	  ())))
+
+(defun tabbymacs-cancel-ghost-text-with-input (event)
+  "Cancel ghost text overlay and replay the triggering EVENT."
+  (interactive (list last-input-event))
+  (tabbymacs-cancel-ghost-text)
+  (setq unread-command-events (nconc unread-command-events (list event))))
+
+(defvar tabbymacs-overlay-map
+  (let ((map (make-sparse-keymap)))
+	(define-key map (kbd "<tab>") #'tabbymacs-accept-ghost-text)
+	(define-key map (kbd "C-<return>") #'tabbymacs-accept-ghost-text)
+	(define-key map (kbd "C-g") #'tabbymacs-cancel-ghost-text)
+	(define-key map (kbd "<escape>") #'tabbymacs-cancel-ghost-text)
+	(define-key map [t] #'tabbymacs-cancel-ghost-text-with-input)
+	map)
+  "Keymap active when ghost text overlay is visible.")
+
+(defun tabbymacs--activate-overlay-map ()
+  "Activate ghost text overlay keymap."
+  (internal-push-keymap tabbymacs-overlay-map 'overriding-terminal-local-map))
+
+(defun tabbymacs--deactivate-overlay-map ()
+  "Deactivate ghost text overlay keymap."
+  (internal-pop-keymap tabbymacs-overlay-map 'overriding-terminal-local-map))
+
 (defvar tabbymacs-mode-map
   (let ((map (make-sparse-keymap)))
 	(define-key map (kbd "C-c /") #'tabbymacs--test-completion)
-	(define-key map (kbd "TAB") #'tabbymacs-accept-ghost-text)
 	map)
   "Keymap for `tabbymacs-mode'.")
 
