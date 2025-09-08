@@ -339,7 +339,7 @@ TRIGGER-KIND is :invoked (manual) or :automatic (after typing)."
 		 (when (buffer-live-p buf)
 		   (with-current-buffer buf
 			 (when (= req-id tabbymacs--completion-request-id)
-			   (tabbymacs--handle-inline-completion2 result)))))
+			   (tabbymacs--handle-inline-completion result)))))
 	   :error-fn
 	   (lambda (err)
 		 (when (buffer-live-p buf)
@@ -349,19 +349,6 @@ TRIGGER-KIND is :invoked (manual) or :automatic (after typing)."
 			   (tabbymacs--clear-ghost-overlay)))))))))
 
 (defun tabbymacs--handle-inline-completion (result)
-  "Display the inline completion provided by RESULT."
-  (let* ((items (plist-get result :items))
-		 (items (cond
-				 ((vectorp items) (append items nil))
-				 ((listp items) items)
-				 (t nil))))
-	(if (and items (plist-get (car items) :insertText))
-		(let ((text (plist-get (car items) :insertText)))
-		  (tabbymacs--log :info "Inline suggestion
-%s" text))
-	  (tabbymacs--log :info "No inline suggestions."))))
-
-(defun tabbymacs--handle-inline-completion2 (result)
   "Display the inline completion provided by RESULT as ghost text."
   (let* ((items (plist-get result :items))
 		 (items (cond
@@ -370,7 +357,7 @@ TRIGGER-KIND is :invoked (manual) or :automatic (after typing)."
 				 (t nil))))
 	(if (and items (plist-get (car items) :insertText))
 		(let ((text (plist-get (car items) :insertText)))
-		  (tabbymacs--log :info "Inline suggestion: %s" text)
+		  (tabbymacs--log :debug "Inline suggestion: %s" text)
 		  (tabbymacs--show-ghost-text text))
 	  (tabbymacs--log :debug "No inline suggestions."))))
 
@@ -457,18 +444,6 @@ and post-self-insert hook for inlineCompletion."
 ;; Ghost text
 ;; ------------------------------
 
-(defun tabbymacs--test-hooks ()
-  (add-hook 'post-self-insert-hook #'tabbymacs--test-completion nil t))
-
-(defun tabbymacs--test-dhooks ()
-  (remove-hook 'post-self-insert-hook #'tabbymacs--test-completion t))
-
-(defun tabbymacs--test-completion ()
-  (interactive)
-  (tabbymacs--show-ghost-text "int main() {
-    return 0
-};"))
-
 (defvar-local tabbymacs--overlay nil
   "Overlay used to display ghost text inline completion.")
 
@@ -538,12 +513,6 @@ and post-self-insert hook for inlineCompletion."
   "Deactivate ghost text overlay keymap."
   (internal-pop-keymap tabbymacs-overlay-map 'overriding-terminal-local-map))
 
-(defvar tabbymacs-mode-map
-  (let ((map (make-sparse-keymap)))
-	(define-key map (kbd "C-c /") #'tabbymacs--test-completion)
-	map)
-  "Keymap for `tabbymacs-mode'.")
-
 ;; ------------------------------
 ;; Minor mode
 ;; ------------------------------
@@ -558,6 +527,12 @@ and post-self-insert hook for inlineCompletion."
 		tabbymacs--inline-completion-idle-timer nil
 		tabbymacs--completion-request-id 0))
 
+(defvar tabbymacs-mode-map
+  (let ((map (make-sparse-keymap)))
+	(define-key map (kbd "C-c /") #'tabbymacs--invoked-inline-completion)
+	map)
+  "Keymap for `tabbymacs-mode'.")
+
 ;;;###autoload
 (define-minor-mode tabbymacs-mode
   "Minor mode for Tabby LSP inline completion."
@@ -568,16 +543,14 @@ and post-self-insert hook for inlineCompletion."
 	  (progn
 		(tabbymacs--connect)
 		(tabbymacs--reset-vars)
-		(tabbymacs--did-open))
-		;(tabbymacs--test-hooks))
-		;(tabbymacs--enable-hooks))
+		(tabbymacs--did-open)
+		(tabbymacs--enable-hooks))
 	(progn
 	  (when tabbymacs--change-idle-timer
 		(cancel-timer tabbymacs--change-idle-timer))
 	  (when tabbymacs--recent-changes
 		(tabbymacs--did-change))
-	  ;(tabbymacs--disable-hooks)
-	  ;(tabbymacs--test-dhooks)
+	  (tabbymacs--disable-hooks)
 	  (tabbymacs--did-close)
 	  (tabbymacs--reset-vars)
 	  (unless (cl-some (lambda (buf)
