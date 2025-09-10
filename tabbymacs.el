@@ -190,7 +190,6 @@ FMT and ARGS are like in `message'."
 		  (:warning (display-warning 'tabbymacs msg :warning))
 		  (:error (display-warning 'tabbymacs msg :error))
 		  (_ (message "[Tabbymacs][UNKNOWN] %s" msg)))))))
-(setq tabbymacs-log-level :debug)
 
 ;; ------------------------------
 ;; JSONRPC Connection
