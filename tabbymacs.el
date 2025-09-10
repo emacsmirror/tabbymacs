@@ -10,7 +10,7 @@
 ;; ------------------------------
 
 (defvar tabbymacs--connection nil
-  "The JSONRPC connection to tabby-agent")
+  "The JSONRPC connection to tabby-agent.")
 
 (defvar-local tabbymacs--TextDocumentIdentifier-cache nil
   "Cached LSP TextDocumentIdentifier for the current buffer.")
@@ -466,6 +466,7 @@ and post-self-insert hook for inlineCompletion."
   (tabbymacs--deactivate-overlay-map))
 
 (defun tabbymacs--show-ghost-text (text)
+  "Display TEXT as ghost text overlay at point."
   (tabbymacs--clear-overlay)
   (let ((ov (make-overlay (point) (point) nil t t)))
 	(overlay-put ov 'after-string
@@ -474,6 +475,7 @@ and post-self-insert hook for inlineCompletion."
 	(tabbymacs--activate-overlay-map)))
 
 (defun tabbymacs-accept-ghost-text ()
+  "Accept currently shown ghost text into buffer."
   (interactive)
   (when (overlayp tabbymacs--overlay)
 	(let ((str (overlay-get tabbymacs--overlay 'after-string)))
@@ -527,6 +529,29 @@ and post-self-insert hook for inlineCompletion."
 		tabbymacs--inline-completion-idle-timer nil
 		tabbymacs--completion-request-id 0))
 
+(defun tabbymacs--setup ()
+  "Set up tabbymacs-mode."
+  (progn
+	(tabbymacs--connect)
+	(tabbymacs--reset-vars)
+	(tabbymacs--did-open)
+	(tabbymacs--enable-hooks)))
+
+(defun tabbymacs--cleanup ()
+  "Clean up tabbymacs-mode."
+  (progn
+	(when tabbymacs--change-idle-timer
+	  (cancel-timer tabbymacs--change-idle-timer))
+	(when tabbymacs--recent-changes
+	  (tabbymacs--did-change))
+	(tabbymacs--disable-hooks)
+	(tabbymacs--did-close)
+	(tabbymacs--reset-vars)
+	(unless (cl-some (lambda (buf)
+					   (buffer-local-value 'tabbymacs-mode buf))
+					 (buffer-list))
+	  (tabbymacs--disconnect))))
+
 (defvar tabbymacs-mode-map
   (let ((map (make-sparse-keymap)))
 	(define-key map (kbd "C-c /") #'tabbymacs--invoked-inline-completion)
@@ -540,23 +565,8 @@ and post-self-insert hook for inlineCompletion."
   :group 'tabbymacs
   :keymap tabbymacs-mode-map
   (if tabbymacs-mode
-	  (progn
-		(tabbymacs--connect)
-		(tabbymacs--reset-vars)
-		(tabbymacs--did-open)
-		(tabbymacs--enable-hooks))
-	(progn
-	  (when tabbymacs--change-idle-timer
-		(cancel-timer tabbymacs--change-idle-timer))
-	  (when tabbymacs--recent-changes
-		(tabbymacs--did-change))
-	  (tabbymacs--disable-hooks)
-	  (tabbymacs--did-close)
-	  (tabbymacs--reset-vars)
-	  (unless (cl-some (lambda (buf)
-						 (buffer-local-value 'tabbymacs-mode buf))
-					   (buffer-list))
-		(tabbymacs--disconnect)))))
+	  (tabbymacs--setup)
+	(tabbymacs--cleanup)))
 
 (provide 'tabbymacs)
 
