@@ -54,10 +54,10 @@ Typing also dismisses the current suggestion.
 
 ** Configuration
 - =tabbymacs-auto-trigger= (default: =t=)
-  Set it to =nil= for manual-only triggering.
+  - Set it to =nil= for manual-only triggering.
 - =tabbymacs-log-level= (default: =:info=)
-  Controls verbosity of Tabbymacs logging. Options: =:debug=, =:info=, =:warning=, =:error=.
+  - Controls verbosity of Tabbymacs logging. Options: =:debug=, =:info=, =:warning=, =:error=.
 - =tabbymacs-inline-completion-idle-time= (default: =1.0=)
-  Defines time in seconds to wait before automatically requesting completion
+  - Defines time in seconds to wait before automatically requesting completion
 - =tabbymacs-send-changes-idle-time= (default: =0.5=)
-  Defines time in seconds to wait before sending changes notifycation to tabby-agent
+  - Defines time in seconds to wait before sending changes notifycation to tabby-agent
