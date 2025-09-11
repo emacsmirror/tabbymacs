@@ -1,4 +1,4 @@
-;;; tabbymacs.el --- The Emacs Client for tabby-agent  -*- lexical-binding: t; -*-
+;;; tabbymacs.el --- Inline AI code completions via Tabby LSP.  -*- lexical-binding: t; -*-
 
 (require 'json)
 (require 'jsonrpc)
@@ -60,7 +60,7 @@ You can extend this mapping for custom major modes."
   :group 'tabbymacs)
 
 (defcustom tabbymacs-inline-completion-idle-time 1.0
-  "Idle dalay (seconds) after user input before sending inlineCompletion request."
+  "Idle delay (seconds) after user input before sending inlineCompletion request."
   :type 'number
   :group 'tabbymacs)
 
@@ -317,7 +317,7 @@ FMT and ARGS are like in `message'."
 			 (not (eq this-command 'tabbymacs--invoked-inline-completion))) ;; don't recurse
 	(tabbymacs--inline-completion :automatic)))
 
-(defun tabbymacs--invoked-inline-completion ()
+(defun tabbymacs-invoked-inline-completion ()
   "Request inline completion manually at point."
   (interactive)
   (tabbymacs--inline-completion :invoked))
@@ -553,13 +553,13 @@ and post-self-insert hook for inlineCompletion."
 
 (defvar tabbymacs-mode-map
   (let ((map (make-sparse-keymap)))
-	(define-key map (kbd "C-c /") #'tabbymacs--invoked-inline-completion)
+	(define-key map (kbd "C-c /") #'tabbymacs-invoked-inline-completion)
 	map)
   "Keymap for `tabbymacs-mode'.")
 
 ;;;###autoload
 (define-minor-mode tabbymacs-mode
-  "Minor mode for Tabby LSP inline completion."
+  "Minor mode for inline completion via Tabby LSP."
   :lighter " Tabbymacs"
   :group 'tabbymacs
   :keymap tabbymacs-mode-map

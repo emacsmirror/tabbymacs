@@ -1,0 +1,63 @@
+#+title: tabbymacs
+#+author: Jędrzej Kędzierski
+
+Tabbymacs is an Emacs minor mode that brings *Tabby AI inline completions* into your editor.
+It displays completions as /ghost text/, similar to GitHub Copilot, but is powered by [[tabby.tabbyml.com][Tabby]]
+
+* Features
+- Inline (ghost text) completions at point
+- Automatic or manual triggering of completions
+- Accept or dismiss suggestions with simple key bindings
+- Suggestions disappear automatically when you keep typing
+- Efficient incremental sync with =tabby-agent= via JSON-RPC
+- Lightweight LSP client design with *inline completion* support ([[https://www.tabbyml.com/blog/create-tabby-extension-with-language-server-protocol][approach recommended by Tabby team]])
+
+* Requirements
+- Emacs 28.1+
+- Tabby Server: The backend LLM server, please refer to this [[https://tabby.tabbyml.com/docs/quick-start/installation/docker/][documentation]]
+- Tabby Agent (LSP server): Requires [[https://nodejs.org/en/download/][Node.js]] version v18.0+ and [[https://www.npmjs.com/package/tabby-agent][tabby-agent]] installed (=npm install --global tabby-agent=)
+  - Remember to configure Tabby Agent according to [[https://tabby.tabbyml.com/docs/extensions/configurations/][documentation]]
+
+* Installation
+
+** Manual
+Clone this repo and add it to your =load-path=:
+#+begin_src emacs-lisp
+(add-to-list 'load-path "/path/to/tabbymacs")
+(require 'tabbymacs)
+#+end_src
+
+** Using =use-package=
+#+begin_src emacs-lisp
+;;Example configuration
+(use-package tabbymacs
+  :load-path "/path/to/tabbymacs"
+  :init
+  (setq tabbymacs-inline-completion-idle-time 0.6)
+  (setq tabbymacs-log-level :debug)
+  :hook (prog-mode . tabbymacs-mode))
+#+end_src
+
+* Usage
+Enable =tabbymacs-mode= in a buffer: =M-x tabbymacs-mode=.
+
+If everything is working, ghost text suggestions will appear while you type.
+
+** Key bindings
+| Command                             | Key                 | Description                 |
+|-------------------------------------+---------------------+-----------------------------|
+| tabbymacs-accept-ghost-text         | <tab> or C-<return> | Accept current completion   |
+| tabbymacs-cancel-ghost-text         | <escape> or C-g     | Dismiss current completion  |
+| tabbymacs-invoked-inline-completion | C-c /               | Request completion manually |
+
+Typing also dismisses the current suggestion.
+
+** Configuration
+- =tabbymacs-auto-trigger= (default: =t=)
+  Set it to =nil= for manual-only triggering.
+- =tabbymacs-log-level= (default: =:info=)
+  Controls verbosity of Tabbymacs logging. Options: =:debug=, =:info=, =:warning=, =:error=.
+- =tabbymacs-inline-completion-idle-time= (default: =1.0=)
+  Defines time in seconds to wait before automatically requesting completion
+- =tabbymacs-send-changes-idle-time= (default: =0.5=)
+  Defines time in seconds to wait before sending changes notifycation to tabby-agent
