@@ -549,7 +549,7 @@ and post-self-insert hook for inlineCompletion."
 		 (buffer-substring-no-properties beg tabbymacs--start-point)
 		 insert-text)
 		(progn
-		  (setq display-str (substring propertized-text 0 (- tabbymacs--start-point beg)))
+		  (setq display-str (substring insert-text 0 (- tabbymacs--start-point beg)))
 		  (setq after-str (substring propertized-text (- tabbymacs--start-point beg)))
 		  (setq target-position tabbymacs--start-point))
 	  (setq display-str (substring propertized-text 0 1))
