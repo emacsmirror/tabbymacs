@@ -338,7 +338,7 @@ TRIGGER-KIND is :invoked (manual) or :automatic (after typing)."
 		 (when (buffer-live-p buf)
 		   (with-current-buffer buf
 			 (when (= req-id tabbymacs--completion-request-id)
-			   (tabbymacs--handle-inline-completion result)))))
+			   (tabbymacs--handle-inline-completion2 result)))))
 	   :error-fn
 	   (lambda (err)
 		 (when (buffer-live-p buf)
@@ -358,6 +358,42 @@ TRIGGER-KIND is :invoked (manual) or :automatic (after typing)."
 		(let ((text (plist-get (car items) :insertText)))
 		  (tabbymacs--log :debug "Inline suggestion: %s" text)
 		  (tabbymacs--show-ghost-text text))
+	  (tabbymacs--log :debug "No inline suggestions."))))
+
+(defun tabbymacs--parse-items (result)
+  "Parse the textDocument/inlineCompletion RESULT and return a list of InlineCompletionItem objects.
+RESULT may be:
+- an InlineCompletionList with an :items field,
+- a vector or list of InlineCompletionItem,
+- nil (no completions)."
+  (cond
+   ;; No completions
+   ((null result) nil)
+   ;; InlineCompletionList with :items
+   ((and (listp result) (plist-get result :items))
+	(let ((items (plist-get result :items)))
+	  (cond
+	   ((vectorp items) (append items nil))
+	   ((listp items) items)
+	   (t nil))))
+   ;; InlineCompletionItems[] (vector)
+   ((vectorp result)
+	(append result nil))
+   ;; InlineCompletionItem[] (list)
+   ((listp result)
+	result)
+   ;; Fallback: inknown type
+   (t
+	(tabbymacs--log :warning "Unexpected inline completion result format: %S" result)
+	nil)))
+
+(defun tabbymacs--handle-inline-completion2 (result)
+  "Handle RESULT of inline completion request."
+  (let ((items (tabbymacs--parse-items result)))
+	(if items
+		(progn
+		  (tabbymacs--log :debug "Inline suggestions: %S" items)
+		  (tabbymacs--show-ghost-text items))
 	  (tabbymacs--log :debug "No inline suggestions."))))
 
 ;; ------------------------------
@@ -404,12 +440,12 @@ See Eglot's eglot--after-change function and Eglot's issues #259 and #367 for re
   (let ((buf (current-buffer)))
 	(setq tabbymacs--change-idle-timer
 		  (run-with-idle-timer
-		   tabbymacs-send-changes-idle-time
-		   nil (lambda ()
-				 (when (buffer-live-p buf)
-				   (with-current-buffer buf
-					 (tabbymacs--did-change)
-					 (setq tabbymacs--change-idle-timer nil))))))))
+		   tabbymacs-send-changes-idle-time nil
+		   (lambda ()
+			 (when (buffer-live-p buf)
+			   (with-current-buffer buf
+				 (tabbymacs--did-change)
+				 (setq tabbymacs--change-idle-timer nil))))))))
 
 (defun tabbymacs--schedule-inline-completion ()
   "Schedule an inlineCompletion request after idle."
@@ -449,13 +485,24 @@ and post-self-insert hook for inlineCompletion."
 (defvar-local tabbymacs--start-point nil
   "The point where the completion started.")
 
-(defvar-local tabbymacs--current nil
+(defvar-local tabbymacs--completions nil
+  "The completions provided by Tabby.")
+
+(defvar-local tabbymacs--current-completion-id nil
   "The current suggestion to be displayed.")
 
 (defface tabbymacs-overlay-face
   '((t :inherit shadow))
   "Face for the inline code suggestions overlay."
   :group 'tabbymacs)
+
+(defun tabbymacs--lsp-position-to-pos (pos)
+  "Convert LSP position POS (:line and :character) to buffer position."
+  (save-excursion
+	(goto-char (point-min))
+	(forward-line (plist-get pos :line))
+	(forward-char (plist-get pos :character))
+	(point)))
 
 (defun tabbymacs--clear-overlay ()
   "Remove ghost text overlay if present."
@@ -464,23 +511,77 @@ and post-self-insert hook for inlineCompletion."
   (setq tabbymacs--overlay nil)
   (tabbymacs--deactivate-overlay-map))
 
-(defun tabbymacs--show-ghost-text (text)
-  "Display TEXT as ghost text overlay at point."
+(defun tabbymacs--show-ghost-text (items)
+  "Display ITEMS as ghost text overlay at point."
   (tabbymacs--clear-overlay)
-  (let ((ov (make-overlay (point) (point) nil t t)))
-	(overlay-put ov 'after-string
-				 (propertize text 'face 'shadow))
-	(setq tabbymacs--overlay ov)
-	(tabbymacs--activate-overlay-map)))
+  (setq tabbymacs--completions items)
+  (setq tabbymacs--current-completion-id 0)
+  (setq tabbymacs--start-point (point))
+  (tabbymacs--show-overlay))
+
+(defun tabbymacs--show-overlay ()
+  "Make the suggestion overlay visible."
+  (unless (and tabbymacs--completions
+			   (numberp tabbymacs--current-completion-id))
+	(error "No completions to show."))
+  (tabbymacs--clear-overlay)
+  (let* ((suggestion (elt tabbymacs--completions tabbymacs--current-completion-id))
+		 (insert-text (plist-get suggestion :insertText))
+		 (range (plist-get suggestion :range))
+		 (start (when range
+				  (tabbymacs--lsp-position-to-pos (plist-get range :start))))
+		 (end (when range
+				(tabbymacs--lsp-position-to-pos (plist-get range :end))))
+		 (start-point (or start (point)))
+		 (showing-at-eol (save-excursion
+						   (goto-char start-point)
+						   (and (not (bolp)) (eolp))))
+		 (beg (if showing-at-eol (1- start-point) start-point))
+		 (end-point (or end (1+ beg)))
+		 (propertized-text (concat
+							(buffer-substring beg start-point)
+							(propertize insert-text 'face 'tabbymacs-overlay-face)))
+		 (ov (tabbymacs--get-overlay beg end-point))
+		 display-str after-str target-position)
+	(goto-char beg)
+	(put-text-property 0 (length propertized-text) 'cursor t propertized-text)
+	(if (string-prefix-p
+		 (buffer-substring-no-properties beg tabbymacs--start-point)
+		 insert-text)
+		(progn
+		  (setq display-str (substring propertized-text 0 (- tabbymacs--start-point beg)))
+		  (setq after-str (substring propertized-text (- tabbymacs--start-point beg)))
+		  (setq target-position tabbymacs--start-point))
+	  (setq display-str (substring propertized-text 0 1))
+	  (setq after-str (substring propertized-text 1))
+	  (setq target-position beg))
+	(overlay-put ov 'display display-str)
+	(overlay-put ov 'after-string after-str)
+	(goto-char target-position)))
+
+(defun tabbymacs--get-overlay (beg end)
+  "Build the suggestion overlay."
+  (tabbymacs--clear-overlay)
+  (setq tabbymacs--overlay (make-overlay beg end nil nil t))
+  (tabbymacs--activate-overlay-map)
+  tabbymacs--overlay)
 
 (defun tabbymacs-accept-ghost-text ()
   "Accept currently shown ghost text into buffer."
   (interactive)
   (when (overlayp tabbymacs--overlay)
-	(let ((str (overlay-get tabbymacs--overlay 'after-string)))
-	  (tabbymacs--clear-overlay)
-	  (when str
-		(insert (substring-no-properties str))))))
+	(let* ((disp (overlay-get tabbymacs--overlay 'display))
+		   (after (overlay-get tabbymacs--overlay 'after-string))
+		   (beg (overlay-start tabbymacs--overlay))
+		   (end (overlay-end tabbymacs--overlay)))
+	  (cond
+	   (disp
+		(delete-region beg end)
+		(insert (substring-no-properties disp)))
+	   (after
+		(goto-char end)
+		(insert (substring-no-properties after)))))
+	(tabbymacs--clear-overlay)))
 
 (defun tabbymacs-cancel-ghost-text ()
   "Cancel ghost text overlay."

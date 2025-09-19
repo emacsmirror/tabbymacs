@@ -60,4 +60,4 @@ Typing also dismisses the current suggestion.
 - =tabbymacs-inline-completion-idle-time= (default: =1.0=)
   - Defines time in seconds to wait before automatically requesting completion
 - =tabbymacs-send-changes-idle-time= (default: =0.5=)
-  - Defines time in seconds to wait before sending changes notifycation to tabby-agent
+  - Defines time in seconds to wait before sending changes notification to tabby-agent
