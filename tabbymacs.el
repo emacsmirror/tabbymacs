@@ -536,11 +536,10 @@ and post-self-insert hook for inlineCompletion."
 		 (showing-at-eol (save-excursion
 						   (goto-char start-point)
 						   (and (not (bolp)) (eolp))))
-		 (beg (if showing-at-eol (1- start-point) start-point))
+		 ;(beg (if showing-at-eol (1- start-point) start-point))
+		 (beg start-point)
 		 (end-point (or end (1+ beg)))
-		 (propertized-text (concat
-							(buffer-substring beg start-point)
-							(propertize insert-text 'face 'tabbymacs-overlay-face)))
+		 (propertized-text (propertize insert-text 'face 'tabbymacs-overlay-face))
 		 (ov (tabbymacs--get-overlay beg end-point))
 		 display-str after-str target-position)
 	(goto-char beg)
@@ -569,19 +568,22 @@ and post-self-insert hook for inlineCompletion."
 (defun tabbymacs-accept-ghost-text ()
   "Accept currently shown ghost text into buffer."
   (interactive)
-  (when (overlayp tabbymacs--overlay)
-	(let* ((disp (overlay-get tabbymacs--overlay 'display))
-		   (after (overlay-get tabbymacs--overlay 'after-string))
-		   (beg (overlay-start tabbymacs--overlay))
-		   (end (overlay-end tabbymacs--overlay)))
-	  (cond
-	   (disp
-		(delete-region beg end)
-		(insert (substring-no-properties disp)))
-	   (after
-		(goto-char end)
-		(insert (substring-no-properties after)))))
-	(tabbymacs--clear-overlay)))
+  (when (and (overlayp tabbymacs--overlay)
+			 tabbymacs--completions
+			 (numberp tabbymacs--current-completion-id))
+	(let* ((suggestion (elt tabbymacs--completions
+							tabbymacs--current-completion-id))
+		   (insert-text (plist-get suggestion :insertText))
+		   (range (plist-get suggestion :range))
+		   (start (when range
+					(tabbymacs--lsp-position-to-pos (plist-get range :start))))
+		   (end (when range
+				  (tabbymacs--lsp-position-to-pos (plist-get range :end)))))
+	  (tabbymacs--clear-overlay)
+	  (when (and start end)
+		(delete-region start end)
+		(goto-char start))
+	  (insert insert-text))))
 
 (defun tabbymacs-cancel-ghost-text ()
   "Cancel ghost text overlay."
@@ -589,7 +591,7 @@ and post-self-insert hook for inlineCompletion."
   (let ((was-active (overlayp tabbymacs--overlay)))
 	(tabbymacs--clear-overlay)
 	(when was-active
-	  ())))
+	  (goto-char tabbymacs--start-point))))
 
 (defun tabbymacs-cancel-ghost-text-with-input (event)
   "Cancel ghost text overlay and replay the triggering EVENT."
