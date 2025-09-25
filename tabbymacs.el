@@ -215,7 +215,7 @@ FMT and ARGS are like in `message'."
 		  (:debug
 		   (with-current-buffer (get-buffer-create tabbymacs--debug-buffer)
 			 (goto-char (point-max))
-			 (insert (format-time-string "[%Y-%m-%d %H:%M:%S] "))
+			 (insert (format-time-string "[%F %T] "))
 			 (insert "[DEBUG] " msg "\n")))
 		  (:info (message "[Tabbymacs] %s" msg))
 		  (:warning (display-warning 'tabbymacs msg :warning))
