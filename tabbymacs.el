@@ -1,5 +1,9 @@
 ;;; tabbymacs.el --- Inline AI code completions via Tabby LSP.  -*- lexical-binding: t; -*-
 
+
+;;; Commentary:
+;; 
+
 ;;; Code:
 
 (require 'json)
@@ -316,7 +320,7 @@ FMT and ARGS are like in `message'."
 	 `(:textDocument ,(tabbymacs--TextDocumentIdentifier)))))
 
 (defun tabbymacs--did-change ()
-  "Send textDocument/didChange notification for recorded changes."
+  "Send textDocument/didChange notification for the current buffer."
   (when (and tabbymacs--recent-changes tabbymacs--connection buffer-file-name)
 	(jsonrpc-notify
 	 tabbymacs--connection
@@ -622,7 +626,7 @@ Enable post-self-insert hook for inlineCompletion."
 		tabbymacs--completion-request-id 0))
 
 (defun tabbymacs--setup ()
-  "Set up tabbymacs-mode."
+  "Set up `tabbymacs-mode'."
   (progn
 	(tabbymacs--connect)
 	(tabbymacs--reset-vars)
@@ -630,7 +634,7 @@ Enable post-self-insert hook for inlineCompletion."
 	(tabbymacs--enable-hooks)))
 
 (defun tabbymacs--cleanup ()
-  "Clean up tabbymacs-mode."
+  "Clean up `tabbymacs-mode'."
   (progn
 	(when tabbymacs--change-idle-timer
 	  (cancel-timer tabbymacs--change-idle-timer))
