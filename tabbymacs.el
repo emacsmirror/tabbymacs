@@ -353,7 +353,9 @@ TRIGGER-KIND is :invoked (manual) or :automatic (after typing)."
   (tabbymacs--flush-pending-changes)
   (when (and tabbymacs--connection buffer-file-name)
 	(let ((req-id (cl-incf tabbymacs--completion-request-id))
-		  (buf (current-buffer)))
+		  (buf (current-buffer))
+		  (start (point))
+		  (mod-tick (buffer-chars-modified-tick)))
 	  (jsonrpc-async-request
 	   tabbymacs--connection
 	   :textDocument/inlineCompletion
@@ -362,7 +364,9 @@ TRIGGER-KIND is :invoked (manual) or :automatic (after typing)."
 	   (lambda (result)
 		 (when (buffer-live-p buf)
 		   (with-current-buffer buf
-			 (when (= req-id tabbymacs--completion-request-id)
+			 (when (and (= req-id tabbymacs--completion-request-id)
+						(= mod-tick (buffer-chars-modified-tick)))
+			   (setq tabbymacs--start-point start)
 			   (tabbymacs--handle-inline-completion result)))))
 	   :error-fn
 	   (lambda (err)
@@ -394,7 +398,7 @@ RESULT may be:
    ;; InlineCompletionItem[] (list)
    ((listp result)
 	result)
-   ;; Fallback: inknown type
+   ;; Fallback: unknown type
    (t
 	(tabbymacs--log :warning "Unexpected inline completion result format: %S" result)
 	nil)))
@@ -510,7 +514,7 @@ and post-self-insert hook for inlineCompletion."
   (tabbymacs--clear-overlay)
   (setq tabbymacs--completions items)
   (setq tabbymacs--current-completion-id 0)
-  (setq tabbymacs--start-point (point))
+  ;(setq tabbymacs--start-point (point))
   (tabbymacs--show-overlay))
 
 (defun tabbymacs--show-overlay ()
@@ -538,16 +542,21 @@ and post-self-insert hook for inlineCompletion."
 		 display-str after-str target-position)
 	(goto-char beg)
 	(put-text-property 0 (length propertized-text) 'cursor t propertized-text)
-	(if (string-prefix-p
-		 (buffer-substring-no-properties beg tabbymacs--start-point)
-		 insert-text)
+	(if (and (/= beg tabbymacs--start-point)
+			 (string-prefix-p
+			  (buffer-substring-no-properties beg tabbymacs--start-point)
+			  insert-text))
 		(progn
 		  (setq display-str (substring insert-text 0 (- tabbymacs--start-point beg)))
 		  (setq after-str (substring propertized-text (- tabbymacs--start-point beg)))
 		  (setq target-position tabbymacs--start-point))
-	  (setq display-str (substring propertized-text 0 1))
-	  (setq after-str (substring propertized-text 1))
+		  ;(message "PREFdisplay:_%s; after:_%s; beg: %s; start: %s; target: %s" display-str after-str beg tabbymacs--start-point target-position))
+	  ;(setq display-str (substring insert-text 0 1))
+	  (setq display-str "")
+	  (setq after-str propertized-text)
+	  ;(setq after-str (substring propertized-text 1))
 	  (setq target-position beg))
+	  ;(message "NOdisplay:_%s; after:_%s; beg: %s; start: %s; target: %s" display-str after-str beg tabbymacs--start-point target-position))
 	(overlay-put ov 'display display-str)
 	(overlay-put ov 'after-string after-str)
 	(goto-char target-position)))
