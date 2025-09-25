@@ -512,9 +512,8 @@ and post-self-insert hook for inlineCompletion."
 (defun tabbymacs--show-ghost-text (items)
   "Display ITEMS as ghost text overlay at point."
   (tabbymacs--clear-overlay)
-  (setq tabbymacs--completions items)
-  (setq tabbymacs--current-completion-id 0)
-  ;(setq tabbymacs--start-point (point))
+  (setq tabbymacs--completions items
+		tabbymacs--current-completion-id 0)
   (tabbymacs--show-overlay))
 
 (defun tabbymacs--show-overlay ()
@@ -530,13 +529,8 @@ and post-self-insert hook for inlineCompletion."
 				  (tabbymacs--lsp-position-to-pos (plist-get range :start))))
 		 (end (when range
 				(tabbymacs--lsp-position-to-pos (plist-get range :end))))
-		 (start-point (or start (point)))
-		 (showing-at-eol (save-excursion
-						   (goto-char start-point)
-						   (and (not (bolp)) (eolp))))
-		 ;(beg (if showing-at-eol (1- start-point) start-point))
-		 (beg start-point)
-		 (end-point (or end (1+ beg)))
+		 (beg (or start tabbymacs--start-point))
+		 (end-point (or end beg))
 		 (propertized-text (propertize insert-text 'face 'tabbymacs-overlay-face))
 		 (ov (tabbymacs--get-overlay beg end-point))
 		 display-str after-str target-position)
@@ -550,13 +544,9 @@ and post-self-insert hook for inlineCompletion."
 		  (setq display-str (substring insert-text 0 (- tabbymacs--start-point beg)))
 		  (setq after-str (substring propertized-text (- tabbymacs--start-point beg)))
 		  (setq target-position tabbymacs--start-point))
-		  ;(message "PREFdisplay:_%s; after:_%s; beg: %s; start: %s; target: %s" display-str after-str beg tabbymacs--start-point target-position))
-	  ;(setq display-str (substring insert-text 0 1))
 	  (setq display-str "")
 	  (setq after-str propertized-text)
-	  ;(setq after-str (substring propertized-text 1))
 	  (setq target-position beg))
-	  ;(message "NOdisplay:_%s; after:_%s; beg: %s; start: %s; target: %s" display-str after-str beg tabbymacs--start-point target-position))
 	(overlay-put ov 'display display-str)
 	(overlay-put ov 'after-string after-str)
 	(goto-char target-position)))
