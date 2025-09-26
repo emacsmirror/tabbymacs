@@ -1,8 +1,21 @@
-;;; tabbymacs.el --- Inline AI code completions via Tabby LSP.  -*- lexical-binding: t; -*-
+;;; tabbymacs.el --- Inline AI code completions via Tabby LSP  -*- lexical-binding: t; -*-
 
+;; Copyright (C) 2025 Jędrzej Kędzierski
+
+;; Author: Jędrzej Kędzierski <kedzierski.jedrzej@gmail.com>
+;; Version: 1.0
+;; Package-Requires: ((emacs "27.1"))
+;; Keywords: tools, languages, inline completions, tabby, llm
+;; URL: https://github.com/Bastillan/tabbymacs
 
 ;;; Commentary:
-;; 
+
+;; This package integrates Emacs with Tabby - an open-source,
+;; self-hosted AI coding assistant - by displaying inline completions
+;; in the buffer in the form of ghost-text.
+
+;; You need to install and configure Tabby Server and Tabby Agent independently.
+;; See: https://www.tabbyml.com/
 
 ;;; Code:
 
@@ -399,7 +412,7 @@ RESULT may be:
 	   ((vectorp items) (append items nil))
 	   ((listp items) items)
 	   (t nil))))
-   ;; InlineCompletionItems[] (vector)
+   ;; InlineCompletionItem[] (vector)
    ((vectorp result)
 	(append result nil))
    ;; InlineCompletionItem[] (list)
@@ -542,8 +555,6 @@ Enable post-self-insert hook for inlineCompletion."
 		 (propertized-text (propertize insert-text 'face 'tabbymacs-overlay-face))
 		 (ov (tabbymacs--get-overlay beg end-point))
 		 display-str after-str target-position)
-	(goto-char beg)
-	(put-text-property 0 (length propertized-text) 'cursor t propertized-text)
 	(if (and (/= beg tabbymacs--start-point)
 			 (string-prefix-p
 			  (buffer-substring-no-properties beg tabbymacs--start-point)
@@ -555,6 +566,7 @@ Enable post-self-insert hook for inlineCompletion."
 	  (setq display-str "")
 	  (setq after-str propertized-text)
 	  (setq target-position beg))
+	(put-text-property 0 (length after-str) 'cursor t after-str)
 	(overlay-put ov 'display display-str)
 	(overlay-put ov 'after-string after-str)
 	(goto-char target-position)))
