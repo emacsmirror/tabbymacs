@@ -554,22 +554,12 @@ Enable post-self-insert hook for inlineCompletion."
 		 (end-point (or end beg))
 		 (propertized-text (propertize insert-text 'face 'tabbymacs-overlay-face))
 		 (ov (tabbymacs--get-overlay beg end-point))
-		 display-str after-str target-position)
-	(if (and (/= beg tabbymacs--start-point)
-			 (string-prefix-p
-			  (buffer-substring-no-properties beg tabbymacs--start-point)
-			  insert-text))
-		(progn
-		  (setq display-str (substring insert-text 0 (- tabbymacs--start-point beg)))
-		  (setq after-str (substring propertized-text (- tabbymacs--start-point beg)))
-		  (setq target-position tabbymacs--start-point))
-	  (setq display-str "")
-	  (setq after-str propertized-text)
-	  (setq target-position beg))
+		 (display-str (substring insert-text 0 (- tabbymacs--start-point beg)))
+		 (after-str (substring propertized-text (- tabbymacs--start-point beg))))
 	(put-text-property 0 (length after-str) 'cursor t after-str)
 	(overlay-put ov 'display display-str)
 	(overlay-put ov 'after-string after-str)
-	(goto-char target-position)))
+	(goto-char tabbymacs--start-point)))
 
 (defun tabbymacs-accept-ghost-text ()
   "Accept currently shown ghost text into buffer."
