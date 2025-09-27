@@ -1,4 +1,39 @@
-;;; tabbymacs.el --- Inline AI code completions via Tabby LSP.  -*- lexical-binding: t; -*-
+;;; tabbymacs.el --- Inline AI code completions via Tabby LSP  -*- lexical-binding: t; -*-
+
+;; Copyright (C) 2025 Jędrzej Kędzierski
+
+;; Author: Jędrzej Kędzierski <kedzierski.jedrzej@gmail.com>
+;; Version: 1.0
+;; Package-Requires: ((emacs "27.1"))
+;; Keywords: tools, languages, inline completions, tabby, llm
+;; URL: https://github.com/Bastillan/tabbymacs
+;; SPDX-License-Identifier: GPL-3.0-or-later
+
+;;; License:
+
+;; This program is free software: you can redistribute it and/or modify
+;; it under the terms of the GNU General Public License as published by
+;; the Free Software Foundation, either version 3 of the License, or
+;; (at your option) any later version.
+
+;; This program is distributed in the hope that it will be useful,
+;; but WITHOUT ANY WARRANTY; without even the implied warranty of
+;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;; GNU General Public License for more details.
+
+;; You should have received a copy of the GNU General Public License
+;; along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+;;; Commentary:
+
+;; This package integrates Emacs with Tabby - an open-source,
+;; self-hosted AI coding assistant - by displaying inline completions
+;; in the buffer in the form of ghost text.
+
+;; You need to install and configure Tabby Server and Tabby Agent independently.
+;; See: https://www.tabbyml.com/
+
+;;; Code:
 
 (require 'json)
 (require 'jsonrpc)
@@ -6,43 +41,11 @@
 (require 'url-util)
 
 ;; ------------------------------
-;; Buffer-local caches & vars
-;; ------------------------------
-
-(defvar tabbymacs--connection nil
-  "The JSONRPC connection to tabby-agent.")
-
-(defvar-local tabbymacs--TextDocumentIdentifier-cache nil
-  "Cached LSP TextDocumentIdentifier for the current buffer.")
-
-(defvar-local tabbymacs--current-buffer-version 0
-  "The version number of document (it increases after each change).")
-
-(defvar-local tabbymacs--buffer-languageId-cache nil
-  "Cached LSP languageId for current buffer.")
-
-(defvar-local tabbymacs--change-idle-timer nil
-  "Idle timer for batching textDocument/didChange notifications.")
-
-(defvar-local tabbymacs--recent-changes nil
-  "List of pending buffer changes for textDocument/didChange or
-the symbol `:emacs-messup' if Emacs gave inconsistent data.")
-
-(defvar-local tabbymacs--completion-request-id 0
-  "ID for inline completion requests.")
-
-(defvar-local tabbymacs--inline-completion-idle-timer nil
-  "Idle timer for throttling inline completion requests.")
-
-(defvar tabbymacs--debug-buffer "*tabbymacs-log*"
-  "Buffer name for Tabbymacs debug logging.")
-
-;; ------------------------------
 ;; User configuration
 ;; ------------------------------
 
 (defgroup tabbymacs nil
-  "LSP client for interacting with tabby-agent (Tabby LLM)."
+  "Inline AI code completions via Tabby LSP."
   :prefix "tabbymacs-"
   :group 'tools)
 
@@ -55,7 +58,7 @@ You can extend this mapping for custom major modes."
   :group 'tabbymacs)
 
 (defcustom tabbymacs-send-changes-idle-time 0.5
-  "Don't send changes to tabby-agent before Emacs's been idle for this many seconds."
+  "Idle delay (seconds) after user input before sending didChange notification."
   :type 'number
   :group 'tabbymacs)
 
@@ -79,6 +82,11 @@ Logs below this level will be suppressed."
 				 (const :tag "Error" :error))
   :group 'tabbymacs)
 
+(defface tabbymacs-overlay-face
+  '((t :inherit shadow))
+  "Face for the inline code suggestions overlay."
+  :group 'tabbymacs)
+
 ;; ------------------------------
 ;; Constants
 ;; ------------------------------
@@ -87,6 +95,50 @@ Logs below this level will be suppressed."
   '((:invoked . 1)
 	(:automatic . 2))
   "Mapping from trigger kind keywords to LSP numeric values.")
+
+;; ------------------------------
+;; Buffer-local caches & vars
+;; ------------------------------
+
+(defvar tabbymacs--debug-buffer "*tabbymacs-log*"
+  "Buffer name for Tabbymacs debug logging.")
+
+(defvar tabbymacs--connection nil
+  "The JSONRPC connection to tabby-agent.")
+
+(defvar-local tabbymacs--TextDocumentIdentifier-cache nil
+  "Cached LSP TextDocumentIdentifier for the current buffer.")
+
+(defvar-local tabbymacs--current-buffer-version 0
+  "The version number of document (it increases after each change).")
+
+(defvar-local tabbymacs--buffer-languageId-cache nil
+  "Cached LSP languageId for current buffer.")
+
+(defvar-local tabbymacs--change-idle-timer nil
+  "Idle timer for batching textDocument/didChange notifications.")
+
+(defvar-local tabbymacs--recent-changes nil
+  "List of pending buffer changes for textDocument/didChange.
+If Emacs gave inconsistent data it stores `:emacs-messup'.")
+
+(defvar-local tabbymacs--completion-request-id 0
+  "ID for inline completion requests.")
+
+(defvar-local tabbymacs--inline-completion-idle-timer nil
+  "Idle timer for throttling inline completion requests.")
+
+(defvar-local tabbymacs--overlay nil
+  "Overlay used to display ghost text inline completion.")
+
+(defvar-local tabbymacs--start-point nil
+  "The point where the completion started.")
+
+(defvar-local tabbymacs--completions nil
+  "The completions provided by Tabby.")
+
+(defvar-local tabbymacs--current-completion-id nil
+  "The current id of completion to be displayed.")
 
 ;; ------------------------------
 ;; Utility functions
@@ -171,6 +223,14 @@ TRIGGER-KIND should be one of :invoked or :automatic."
 	(list :line (1- (line-number-at-pos))
 		  :character (- (point) (line-beginning-position)))))
 
+(defun tabbymacs--lsp-position-to-pos (pos)
+  "Convert LSP position POS (:line and :character) to buffer position."
+  (save-excursion
+	(goto-char (point-min))
+	(forward-line (plist-get pos :line))
+	(forward-char (plist-get pos :character))
+	(point)))
+
 (defun tabbymacs--log (level fmt &rest args)
   "Log a message for Tabbymacs.
 LEVEL is one of :debug, :info, :warning, :error.
@@ -184,7 +244,7 @@ FMT and ARGS are like in `message'."
 		  (:debug
 		   (with-current-buffer (get-buffer-create tabbymacs--debug-buffer)
 			 (goto-char (point-max))
-			 (insert (format-time-string "[%Y-%m-%d %H:%M:%S] "))
+			 (insert (format-time-string "[%F %T] "))
 			 (insert "[DEBUG] " msg "\n")))
 		  (:info (message "[Tabbymacs] %s" msg))
 		  (:warning (display-warning 'tabbymacs msg :warning))
@@ -289,7 +349,7 @@ FMT and ARGS are like in `message'."
 	 `(:textDocument ,(tabbymacs--TextDocumentIdentifier)))))
 
 (defun tabbymacs--did-change ()
-  "Send textDocument/didChange notification, batching changes."
+  "Send textDocument/didChange notification for the current buffer."
   (when (and tabbymacs--recent-changes tabbymacs--connection buffer-file-name)
 	(jsonrpc-notify
 	 tabbymacs--connection
@@ -328,7 +388,9 @@ TRIGGER-KIND is :invoked (manual) or :automatic (after typing)."
   (tabbymacs--flush-pending-changes)
   (when (and tabbymacs--connection buffer-file-name)
 	(let ((req-id (cl-incf tabbymacs--completion-request-id))
-		  (buf (current-buffer)))
+		  (buf (current-buffer))
+		  (start (point))
+		  (mod-tick (buffer-chars-modified-tick)))
 	  (jsonrpc-async-request
 	   tabbymacs--connection
 	   :textDocument/inlineCompletion
@@ -337,7 +399,9 @@ TRIGGER-KIND is :invoked (manual) or :automatic (after typing)."
 	   (lambda (result)
 		 (when (buffer-live-p buf)
 		   (with-current-buffer buf
-			 (when (= req-id tabbymacs--completion-request-id)
+			 (when (and (= req-id tabbymacs--completion-request-id)
+						(= mod-tick (buffer-chars-modified-tick)))
+			   (setq tabbymacs--start-point start)
 			   (tabbymacs--handle-inline-completion result)))))
 	   :error-fn
 	   (lambda (err)
@@ -345,19 +409,43 @@ TRIGGER-KIND is :invoked (manual) or :automatic (after typing)."
 		   (with-current-buffer buf
 			 (when (= req-id tabbymacs--completion-request-id)
 			   (tabbymacs--log :error "inlineCompletion error: %S" err)
-			   (tabbymacs--clear-ghost-overlay)))))))))
+			   (tabbymacs--clear-overlay)))))))))
+
+(defun tabbymacs--parse-items (result)
+  "Parse the textDocument/inlineCompletion RESULT.
+Return a list of InlineCompletionItem objects.
+RESULT may be:
+- an InlineCompletionList with an :items field,
+- a vector or list of InlineCompletionItem,
+- nil (no completions)."
+  (cond
+   ;; No completions
+   ((null result) nil)
+   ;; InlineCompletionList with :items
+   ((and (listp result) (plist-get result :items))
+	(let ((items (plist-get result :items)))
+	  (cond
+	   ((vectorp items) (append items nil))
+	   ((listp items) items)
+	   (t nil))))
+   ;; InlineCompletionItem[] (vector)
+   ((vectorp result)
+	(append result nil))
+   ;; InlineCompletionItem[] (list)
+   ((listp result)
+	result)
+   ;; Fallback: unknown type
+   (t
+	(tabbymacs--log :warning "Unexpected inline completion result format: %S" result)
+	nil)))
 
 (defun tabbymacs--handle-inline-completion (result)
-  "Display the inline completion provided by RESULT as ghost text."
-  (let* ((items (plist-get result :items))
-		 (items (cond
-				 ((vectorp items) (append items nil))
-				 ((listp items) items)
-				 (t nil))))
-	(if (and items (plist-get (car items) :insertText))
-		(let ((text (plist-get (car items) :insertText)))
-		  (tabbymacs--log :debug "Inline suggestion: %s" text)
-		  (tabbymacs--show-ghost-text text))
+  "Handle RESULT of inline completion request."
+  (let ((items (tabbymacs--parse-items result)))
+	(if items
+		(progn
+		  (tabbymacs--log :debug "Inline suggestions: %S" items)
+		  (tabbymacs--show-ghost-text items))
 	  (tabbymacs--log :debug "No inline suggestions."))))
 
 ;; ------------------------------
@@ -381,7 +469,8 @@ TRIGGER-KIND is :invoked (manual) or :automatic (after typing)."
 
 (defun tabbymacs--process-recent-change (beg end pre-change-length)
   "Processes the most recent change record.
-See Eglot's eglot--after-change function and Eglot's issues #259 and #367 for reference."
+Use BEG END and PRE-CHANGE-LENGTH from after-change hook.
+See Eglot's issues #259 and #367 for reference."
   (pcase (car-safe tabbymacs--recent-changes)
 	(`(,lsp-beg, lsp-end
 				 (,b-beg . ,b-beg-marker)
@@ -404,12 +493,12 @@ See Eglot's eglot--after-change function and Eglot's issues #259 and #367 for re
   (let ((buf (current-buffer)))
 	(setq tabbymacs--change-idle-timer
 		  (run-with-idle-timer
-		   tabbymacs-send-changes-idle-time
-		   nil (lambda ()
-				 (when (buffer-live-p buf)
-				   (with-current-buffer buf
-					 (tabbymacs--did-change)
-					 (setq tabbymacs--change-idle-timer nil))))))))
+		   tabbymacs-send-changes-idle-time nil
+		   (lambda ()
+			 (when (buffer-live-p buf)
+			   (with-current-buffer buf
+				 (tabbymacs--did-change)
+				 (setq tabbymacs--change-idle-timer nil))))))))
 
 (defun tabbymacs--schedule-inline-completion ()
   "Schedule an inlineCompletion request after idle."
@@ -425,8 +514,8 @@ See Eglot's eglot--after-change function and Eglot's issues #259 and #367 for re
 				 (tabbymacs--auto-inline-completion))))))))
 
 (defun tabbymacs--enable-hooks ()
-  "Enable before and after change hooks for LSP didChange tracking
-and post-self-insert hook for inlineCompletion."
+  "Enable before and after change hooks for LSP didChange tracking.
+Enable post-self-insert hook for inlineCompletion."
   (add-hook 'before-change-functions #'tabbymacs--before-change nil t)
   (add-hook 'after-change-functions #'tabbymacs--after-change nil t)
   (when tabbymacs-auto-trigger
@@ -443,20 +532,6 @@ and post-self-insert hook for inlineCompletion."
 ;; Ghost text
 ;; ------------------------------
 
-(defvar-local tabbymacs--overlay nil
-  "Overlay used to display ghost text inline completion.")
-
-(defvar-local tabbymacs--start-point nil
-  "The point where the completion started.")
-
-(defvar-local tabbymacs--current nil
-  "The current suggestion to be displayed.")
-
-(defface tabbymacs-overlay-face
-  '((t :inherit shadow))
-  "Face for the inline code suggestions overlay."
-  :group 'tabbymacs)
-
 (defun tabbymacs--clear-overlay ()
   "Remove ghost text overlay if present."
   (when (overlayp tabbymacs--overlay)
@@ -464,23 +539,63 @@ and post-self-insert hook for inlineCompletion."
   (setq tabbymacs--overlay nil)
   (tabbymacs--deactivate-overlay-map))
 
-(defun tabbymacs--show-ghost-text (text)
-  "Display TEXT as ghost text overlay at point."
+(defun tabbymacs--get-overlay (beg end)
+  "Build the suggestion overlay spanning from BEG to END."
   (tabbymacs--clear-overlay)
-  (let ((ov (make-overlay (point) (point) nil t t)))
-	(overlay-put ov 'after-string
-				 (propertize text 'face 'shadow))
-	(setq tabbymacs--overlay ov)
-	(tabbymacs--activate-overlay-map)))
+  (setq tabbymacs--overlay (make-overlay beg end nil nil t))
+  (tabbymacs--activate-overlay-map)
+  tabbymacs--overlay)
+
+(defun tabbymacs--show-ghost-text (items)
+  "Display ITEMS as ghost text overlay at point."
+  (tabbymacs--clear-overlay)
+  (setq tabbymacs--completions items
+		tabbymacs--current-completion-id 0)
+  (tabbymacs--show-overlay))
+
+(defun tabbymacs--show-overlay ()
+  "Make the suggestion overlay visible."
+  (unless (and tabbymacs--completions
+			   (numberp tabbymacs--current-completion-id))
+	(error "No completions to show"))
+  (tabbymacs--clear-overlay)
+  (let* ((suggestion (elt tabbymacs--completions tabbymacs--current-completion-id))
+		 (insert-text (plist-get suggestion :insertText))
+		 (range (plist-get suggestion :range))
+		 (start (when range
+				  (tabbymacs--lsp-position-to-pos (plist-get range :start))))
+		 (end (when range
+				(tabbymacs--lsp-position-to-pos (plist-get range :end))))
+		 (beg (or start tabbymacs--start-point))
+		 (end-point (or end beg))
+		 (propertized-text (propertize insert-text 'face 'tabbymacs-overlay-face))
+		 (ov (tabbymacs--get-overlay beg end-point))
+		 (display-str (substring insert-text 0 (- tabbymacs--start-point beg)))
+		 (after-str (substring propertized-text (- tabbymacs--start-point beg))))
+	(put-text-property 0 (length after-str) 'cursor t after-str)
+	(overlay-put ov 'display display-str)
+	(overlay-put ov 'after-string after-str)
+	(goto-char tabbymacs--start-point)))
 
 (defun tabbymacs-accept-ghost-text ()
   "Accept currently shown ghost text into buffer."
   (interactive)
-  (when (overlayp tabbymacs--overlay)
-	(let ((str (overlay-get tabbymacs--overlay 'after-string)))
+  (when (and (overlayp tabbymacs--overlay)
+			 tabbymacs--completions
+			 (numberp tabbymacs--current-completion-id))
+	(let* ((suggestion (elt tabbymacs--completions
+							tabbymacs--current-completion-id))
+		   (insert-text (plist-get suggestion :insertText))
+		   (range (plist-get suggestion :range))
+		   (start (when range
+					(tabbymacs--lsp-position-to-pos (plist-get range :start))))
+		   (end (when range
+				  (tabbymacs--lsp-position-to-pos (plist-get range :end)))))
 	  (tabbymacs--clear-overlay)
-	  (when str
-		(insert (substring-no-properties str))))))
+	  (when (and start end)
+		(delete-region start end)
+		(goto-char start))
+	  (insert insert-text))))
 
 (defun tabbymacs-cancel-ghost-text ()
   "Cancel ghost text overlay."
@@ -488,7 +603,7 @@ and post-self-insert hook for inlineCompletion."
   (let ((was-active (overlayp tabbymacs--overlay)))
 	(tabbymacs--clear-overlay)
 	(when was-active
-	  ())))
+	  (goto-char tabbymacs--start-point))))
 
 (defun tabbymacs-cancel-ghost-text-with-input (event)
   "Cancel ghost text overlay and replay the triggering EVENT."
@@ -529,7 +644,7 @@ and post-self-insert hook for inlineCompletion."
 		tabbymacs--completion-request-id 0))
 
 (defun tabbymacs--setup ()
-  "Set up tabbymacs-mode."
+  "Set up `tabbymacs-mode'."
   (progn
 	(tabbymacs--connect)
 	(tabbymacs--reset-vars)
@@ -537,7 +652,7 @@ and post-self-insert hook for inlineCompletion."
 	(tabbymacs--enable-hooks)))
 
 (defun tabbymacs--cleanup ()
-  "Clean up tabbymacs-mode."
+  "Clean up `tabbymacs-mode'."
   (progn
 	(when tabbymacs--change-idle-timer
 	  (cancel-timer tabbymacs--change-idle-timer))
@@ -568,4 +683,5 @@ and post-self-insert hook for inlineCompletion."
 	(tabbymacs--cleanup)))
 
 (provide 'tabbymacs)
+;;; tabbymacs.el ends here
 

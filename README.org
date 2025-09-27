@@ -2,7 +2,7 @@
 #+author: Jędrzej Kędzierski
 
 Tabbymacs is an Emacs minor mode that brings *Tabby AI inline completions* into your editor.
-It displays completions as /ghost text/, similar to GitHub Copilot, but is powered by [[https://www.tabbyml.com/][Tabby]]
+It displays completions as /ghost text/, similar to GitHub Copilot, but is powered by [[https://www.tabbyml.com/][Tabby]] - an open-source, self-hosted AI coding assistant.
 
 * Features
 - Inline (ghost text) completions at point
@@ -13,7 +13,7 @@ It displays completions as /ghost text/, similar to GitHub Copilot, but is power
 - Lightweight LSP client design with *inline completion* support ([[https://www.tabbyml.com/blog/create-tabby-extension-with-language-server-protocol][approach recommended by Tabby team]])
 
 * Requirements
-- Emacs 28.1+
+- Emacs 27.1+
 - Tabby Server: The backend LLM server, please refer to this [[https://tabby.tabbyml.com/docs/quick-start/installation/docker/][documentation]]
 - Tabby Agent (LSP server): Requires [[https://nodejs.org/en/download/][Node.js]] version v18.0+ and [[https://www.npmjs.com/package/tabby-agent][tabby-agent]] installed (=npm install --global tabby-agent=)
   - Remember to configure Tabby Agent according to [[https://tabby.tabbyml.com/docs/extensions/configurations/][documentation]]
@@ -60,4 +60,4 @@ Typing also dismisses the current suggestion.
 - =tabbymacs-inline-completion-idle-time= (default: =1.0=)
   - Defines time in seconds to wait before automatically requesting completion
 - =tabbymacs-send-changes-idle-time= (default: =0.5=)
-  - Defines time in seconds to wait before sending changes notifycation to tabby-agent
+  - Defines time in seconds to wait before sending changes notification to tabby-agent
