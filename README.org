@@ -2,7 +2,7 @@
 #+author: Jędrzej Kędzierski
 
 Tabbymacs is an Emacs minor mode that brings *Tabby AI inline completions* into your editor.
-It displays completions as /ghost text/, similar to GitHub Copilot, but is powered by [[https://www.tabbyml.com/][Tabby]]
+It displays completions as /ghost text/, similar to GitHub Copilot, but is powered by [[https://www.tabbyml.com/][Tabby]] - an open-source, self-hosted AI coding assistant.
 
 * Features
 - Inline (ghost text) completions at point
