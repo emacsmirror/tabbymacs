@@ -3,7 +3,7 @@
 ;; Copyright (C) 2025 Jędrzej Kędzierski
 
 ;; Author: Jędrzej Kędzierski <kedzierski.jedrzej@gmail.com>
-;; Version: 1.0
+;; Version: 1.0.0
 ;; Package-Requires: ((emacs "27.1"))
 ;; Keywords: tools, languages, inline completions, tabby, llm
 ;; URL: https://github.com/Bastillan/tabbymacs
