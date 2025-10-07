@@ -1,6 +1,6 @@
 ;;; tabbymacs.el --- Inline AI code completions via Tabby LSP  -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2025 Jędrzej Kędzierski
+;; Copyright (C) 2025 Jędrzej Kędzierski, Warsaw University of Technology, Institute of Computer Science
 
 ;; Author: Jędrzej Kędzierski <kedzierski.jedrzej@gmail.com>
 ;; Version: 1.0.0
