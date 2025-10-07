@@ -36,9 +36,9 @@ Clone this repo and add it to your =load-path=:
 #+begin_src emacs-lisp
 ;;Example configuration
 (use-package tabbymacs
-  :init
-  (setq tabbymacs-inline-completion-idle-time 0.6)
-  (setq tabbymacs-log-level :debug)
+  :custom
+  (tabbymacs-inline-completion-idle-time 0.6)
+  (tabbymacs-log-level :debug)
   :hook (prog-mode . tabbymacs-mode))
 #+end_src
 
